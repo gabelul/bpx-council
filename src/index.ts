@@ -27,11 +27,12 @@ interface CliArgs {
 	mode: Mode;
 	configPath: string | undefined;
 	backend: string | undefined;
+	model: string | undefined;
 	help: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-	const args: CliArgs = { question: undefined, mode: "solo", configPath: undefined, backend: undefined, help: false };
+	const args: CliArgs = { question: undefined, mode: "solo", configPath: undefined, backend: undefined, model: undefined, help: false };
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "-h" || a === "--help") args.help = true;
@@ -59,6 +60,8 @@ Options:
   -c, --config <path>  Path to config file (default: ~/.bpx-council.json)
   -b, --backend <name> Force a backend: codex, claude, opencode (CLI) or
                       anthropic, openai, google (HTTP via API key in env)
+      --model <id>     Override the model (e.g. claude-opus-4-20250514).
+                      Also reads BPX_COUNCIL_MODEL / ANTHROPIC_MODEL env vars.
   -h, --help           Show this help
 
 Context:
@@ -112,6 +115,15 @@ async function main(): Promise<void> {
 			: undefined;
 		config.solo.backend = detectBackend(explicit) as never;
 	}
+
+	// Model override: --model flag > BPX_COUNCIL_MODEL env > ANTHROPIC_MODEL env.
+	// For HTTP backends, this sets which model the API call targets. For CLI
+	// backends it's informational (the CLI picks its own model). This is how a
+	// user running Claude Code on Sonnet can make the advisor use Opus, or match.
+	const modelOverride = args.model ?? process.env.BPX_COUNCIL_MODEL ?? process.env.ANTHROPIC_MODEL;
+	if (modelOverride && config.solo.backend && (config.solo.backend as { type: string }).type === "http") {
+		(config.solo.backend as { model?: string }).model = modelOverride;
+	}
 	const commonArgs = { question: args.question, context: stdinContext || undefined, config };
 
 	let result: { ok: true; text: string } | { ok: false; error: string };
@@ -153,8 +165,10 @@ async function main(): Promise<void> {
 function parseBackendArg(arg: string): ExplicitBackend {
 	const cli = ["codex", "claude", "opencode"];
 	const http = ["anthropic", "openai", "google"];
+	const tmux = ["tmux", "pty", "interactive"];
 	if (cli.includes(arg)) return { type: "cli", command: arg };
 	if (http.includes(arg)) return { type: "http", provider: arg };
+	if (tmux.includes(arg)) return { type: "tmux", command: "codex" };
 	// Unknown — treat as a CLI command name.
 	return { type: "cli", command: arg };
 }

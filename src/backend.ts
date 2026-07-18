@@ -11,8 +11,9 @@
 
 import { spawn } from "node:child_process";
 import { callHttpAdvisor, type HttpBackendConfig } from "./http-backend.js";
+import { callPtyAdvisor, type PtyBackendConfig } from "./pty-backend.js";
 
-export type BackendConfig = CliBackendConfig | HttpBackendConfig;
+export type BackendConfig = CliBackendConfig | HttpBackendConfig | PtyBackendConfig;
 
 export interface CliBackendConfig {
 	type: "cli";
@@ -122,6 +123,9 @@ export async function callAdvisor(
 ): Promise<BackendResult> {
 	if (backend.type === "cli") {
 		return callCliAdvisor(systemPrompt, userMessage, backend);
+	}
+	if (backend.type === "tmux") {
+		return callPtyAdvisor(systemPrompt, userMessage, backend);
 	}
 	return callHttpAdvisor(systemPrompt, userMessage, backend);
 }

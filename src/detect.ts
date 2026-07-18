@@ -11,10 +11,12 @@
 import { execSync } from "node:child_process";
 import type { CliBackendConfig } from "./backend.js";
 import type { HttpBackendConfig } from "./http-backend.js";
+import type { PtyBackendConfig } from "./pty-backend.js";
+import { isTmuxAvailable } from "./pty-backend.js";
 
-export type DetectedBackend = CliBackendConfig | HttpBackendConfig;
+export type DetectedBackend = CliBackendConfig | HttpBackendConfig | PtyBackendConfig;
 
-export type BackendType = "cli" | "http";
+export type BackendType = "cli" | "http" | "tmux";
 
 /** What the user explicitly asked for (--backend or config). */
 export interface ExplicitBackend {
@@ -49,6 +51,9 @@ export function detectBackend(explicit?: ExplicitBackend): DetectedBackend {
 function resolveExplicit(explicit: ExplicitBackend): DetectedBackend {
 	if (explicit.type === "cli") {
 		return { type: "cli", command: explicit.command ?? "codex", timeoutMs: 120_000 };
+	}
+	if (explicit.type === "tmux") {
+		return { type: "tmux", command: explicit.command ?? "codex", model: explicit.model, timeoutMs: 120_000 };
 	}
 	// HTTP
 	const provider = (explicit.provider ?? "anthropic") as HttpBackendConfig["provider"];
