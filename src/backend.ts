@@ -10,6 +10,9 @@
  */
 
 import { spawn } from "node:child_process";
+import { callHttpAdvisor, type HttpBackendConfig } from "./http-backend.js";
+
+export type BackendConfig = CliBackendConfig | HttpBackendConfig;
 
 export interface CliBackendConfig {
 	type: "cli";
@@ -105,4 +108,20 @@ export function parseCliOutput(stdout: string, command: string): string {
 	}
 
 	return trimmed;
+}
+
+/**
+ * Unified advisor caller — dispatches to CLI or HTTP based on backend type.
+ * This is what solo/council/debate use: they don't care whether the advisor is
+ * a subprocess or an HTTP call, just that it returns text.
+ */
+export async function callAdvisor(
+	systemPrompt: string,
+	userMessage: string,
+	backend: BackendConfig,
+): Promise<BackendResult> {
+	if (backend.type === "cli") {
+		return callCliAdvisor(systemPrompt, userMessage, backend);
+	}
+	return callHttpAdvisor(systemPrompt, userMessage, backend);
 }

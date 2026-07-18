@@ -7,7 +7,7 @@
  * whoever replied.
  */
 
-import { callCliAdvisor, type CliBackendConfig, type BackendResult } from "./backend.js";
+import { callAdvisor, type BackendConfig, type BackendResult } from "./backend.js";
 import { DEFAULT_PERSONAS, SYNTHESIZER_PROMPT, type Persona } from "./personas.js";
 import type { BpxCouncilConfig } from "./config.js";
 
@@ -27,7 +27,7 @@ const ADVISOR_BASE_PROMPT =
 
 export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 	const { question, context, config } = input;
-	const backend = config.solo.backend as CliBackendConfig | undefined;
+	const backend = (config.solo.backend ?? undefined) as BackendConfig | undefined;
 	if (!backend) {
 		return { ok: false, error: "No backend configured." };
 	}
@@ -63,7 +63,7 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 	const synthMessage = `${synthesisInput}\n\n=== Original Question ===\n${question}`;
 
 	// Synthesize — one more CLI call that merges the verdicts.
-	const synthResult = await callCliAdvisor(SYNTHESIZER_PROMPT, synthMessage, backend);
+	const synthResult = await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, backend);
 
 	if (!synthResult.ok) {
 		// Synthesis failed — return the raw member verdicts so the caller gets something.
@@ -80,7 +80,7 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 async function callCouncilMember(
 	persona: Persona,
 	userMessage: string,
-	backend: CliBackendConfig,
+	backend: BackendConfig,
 ): Promise<BackendResult> {
-	return callCliAdvisor(persona.systemPrompt, userMessage, backend);
+	return callAdvisor(persona.systemPrompt, userMessage, backend);
 }

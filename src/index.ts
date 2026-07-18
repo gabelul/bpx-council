@@ -11,6 +11,7 @@
  */
 
 import { loadConfig } from "./config.js";
+import { detectBackend, type ExplicitBackend } from "./detect.js";
 import { runSolo } from "./solo.js";
 import { runCouncil } from "./council.js";
 import { runDebate } from "./debate.js";
@@ -25,16 +26,18 @@ interface CliArgs {
 	question: string | undefined;
 	mode: Mode;
 	configPath: string | undefined;
+	backend: string | undefined;
 	help: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-	const args: CliArgs = { question: undefined, mode: "solo", configPath: undefined, help: false };
+	const args: CliArgs = { question: undefined, mode: "solo", configPath: undefined, backend: undefined, help: false };
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "-h" || a === "--help") args.help = true;
 		else if (a === "--mode" || a === "-m") args.mode = (argv[++i] as Mode) ?? "solo";
 		else if (a === "--config" || a === "-c") args.configPath = argv[++i];
+		else if (a === "--backend" || a === "-b") args.backend = argv[++i];
 		else if (a === "--question" || a === "-q") args.question = argv[++i];
 		else if (!a.startsWith("-") && !args.question) args.question = a;
 	}
@@ -54,6 +57,8 @@ Options:
   -m, --mode <mode>    solo (default) | council | debate | gut-check
   -q, --question <q>   The question (alternative to passing it positionally)
   -c, --config <path>  Path to config file (default: ~/.bpx-council.json)
+  -b, --backend <name> Force a backend: codex, claude, opencode (CLI) or
+                      anthropic, openai, google (HTTP via API key in env)
   -h, --help           Show this help
 
 Context:
@@ -96,6 +101,17 @@ async function main(): Promise<void> {
 	}
 
 	const config = loadConfig(args.configPath);
+
+	// Auto-detect the backend if not explicitly configured. Override chain:
+	// --backend arg > config file > env vars (ANTHROPIC_API_KEY etc.) > CLIs on
+	// PATH > default (codex). This is what makes bpx-council work from any host:
+	// Claude Code sets ANTHROPIC_API_KEY → HTTP; Codex has codex on PATH → CLI.
+	if (args.backend || !config.solo.backend) {
+		const explicit: ExplicitBackend | undefined = args.backend
+			? parseBackendArg(args.backend)
+			: undefined;
+		config.solo.backend = detectBackend(explicit) as never;
+	}
 	const commonArgs = { question: args.question, context: stdinContext || undefined, config };
 
 	let result: { ok: true; text: string } | { ok: false; error: string };
@@ -132,6 +148,15 @@ async function main(): Promise<void> {
 	}
 
 	console.log(result.text);
+}
+
+function parseBackendArg(arg: string): ExplicitBackend {
+	const cli = ["codex", "claude", "opencode"];
+	const http = ["anthropic", "openai", "google"];
+	if (cli.includes(arg)) return { type: "cli", command: arg };
+	if (http.includes(arg)) return { type: "http", provider: arg };
+	// Unknown — treat as a CLI command name.
+	return { type: "cli", command: arg };
 }
 
 function readStdin(): Promise<string> {

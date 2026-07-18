@@ -16,10 +16,14 @@ export interface BackendConfig {
 	command?: string;
 	args?: string[];
 	timeoutMs?: number;
-	/** HTTP only: the API base URL. */
-	baseUrl?: string;
+	/** HTTP only: the provider name. */
+	provider?: "anthropic" | "openai" | "google";
+	/** HTTP only: the model ID. */
+	model?: string;
 	/** HTTP only: env var name holding the API key. */
 	apiKeyEnv?: string;
+	/** HTTP only: the API base URL. */
+	baseUrl?: string;
 }
 
 export interface AdvisorConfig {
@@ -38,9 +42,10 @@ export interface BpxCouncilConfig {
 export const DEFAULT_CONFIG: BpxCouncilConfig = {
 	defaultMode: "solo",
 	solo: {
-		model: "codex",
+		model: "auto",
 		thinkingLevel: "medium",
-		backend: { type: "cli", command: "codex", timeoutMs: 120_000 },
+		// No hardcoded backend — auto-detect at runtime (env vars > CLIs on PATH).
+		// See src/detect.ts. Override via ~/.bpx-council.json or --backend.
 	},
 	contextWindow: 200_000,
 };

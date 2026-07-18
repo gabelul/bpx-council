@@ -7,7 +7,7 @@
  * sides for genuinely contentious calls.
  */
 
-import { callCliAdvisor, type CliBackendConfig } from "./backend.js";
+import { callAdvisor, type BackendConfig } from "./backend.js";
 import { SYNTHESIZER_PROMPT } from "./personas.js";
 import type { BpxCouncilConfig } from "./config.js";
 
@@ -33,7 +33,7 @@ const CRITIC_PROMPT =
 export async function runDebate(input: DebateInput): Promise<DebateResult> {
 	const { question, context, config } = input;
 	const rounds = Math.min(input.rounds ?? 2, 4);
-	const backend = config.solo.backend as CliBackendConfig | undefined;
+	const backend = (config.solo.backend ?? undefined) as BackendConfig | undefined;
 
 	if (!backend) {
 		return { ok: false, error: "No backend configured." };
@@ -50,20 +50,20 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 		const advocateMsg = round === 0
 			? transcript
 			: `${transcript}\n\n=== Critic's Attack ===\n(see above)\n\nDefend your position or concede. Be specific.`;
-		const advocateResult = await callCliAdvisor(ADVOCATE_PROMPT, advocateMsg, backend);
+		const advocateResult = await callAdvisor(ADVOCATE_PROMPT, advocateMsg, backend);
 		if (!advocateResult.ok) return { ok: false, error: `Advocate failed (round ${round + 1}): ${advocateResult.error}` };
 		transcript += `\n\n### Advocate (round ${round + 1})\n${advocateResult.text}`;
 
 		// Critic attacks.
 		const criticMsg = `${transcript}\n\nCritically reassess the advocate's position. Do not reflexively agree.`;
-		const criticResult = await callCliAdvisor(CRITIC_PROMPT, criticMsg, backend);
+		const criticResult = await callAdvisor(CRITIC_PROMPT, criticMsg, backend);
 		if (!criticResult.ok) return { ok: false, error: `Critic failed (round ${round + 1}): ${criticResult.error}` };
 		transcript += `\n\n### Critic (round ${round + 1})\n${criticResult.text}`;
 	}
 
 	// Synthesize.
 	const synthMessage = `${transcript}\n\n=== Original Question ===\n${question}`;
-	const synthResult = await callCliAdvisor(SYNTHESIZER_PROMPT, synthMessage, backend);
+	const synthResult = await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, backend);
 
 	return synthResult.ok
 		? { ok: true, text: synthResult.text }

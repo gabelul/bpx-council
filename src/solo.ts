@@ -2,7 +2,7 @@
  * solo — one advisor model, one response. The default council mode.
  */
 
-import { callCliAdvisor, type CliBackendConfig } from "./backend.js";
+import { callAdvisor, type BackendConfig } from "./backend.js";
 import type { BpxCouncilConfig } from "./config.js";
 
 export interface SoloInput {
@@ -20,7 +20,7 @@ const ADVISOR_SYSTEM_PROMPT =
 
 export async function runSolo(input: SoloInput): Promise<SoloResult> {
 	const { question, context, config } = input;
-	const backend = config.solo.backend as CliBackendConfig | undefined;
+	const backend = (config.solo.backend ?? undefined) as BackendConfig | undefined;
 
 	if (!backend) {
 		return { ok: false, error: "No backend configured for the solo advisor." };
@@ -30,7 +30,7 @@ export async function runSolo(input: SoloInput): Promise<SoloResult> {
 		? `=== Context ===\n${context}\n\n=== Question ===\n${question}`
 		: question;
 
-	const result = await callCliAdvisor(ADVISOR_SYSTEM_PROMPT, userMessage, backend);
+	const result = await callAdvisor(ADVISOR_SYSTEM_PROMPT, userMessage, backend);
 	return result.ok
 		? { ok: true, text: result.text }
 		: { ok: false, error: result.error ?? "unknown error" };

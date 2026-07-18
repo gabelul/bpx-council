@@ -61,9 +61,11 @@ describe("personas", () => {
 });
 
 describe("config", () => {
-	it("DEFAULT_CONFIG uses codex CLI backend", () => {
-		expect(DEFAULT_CONFIG.solo.backend?.type).toBe("cli");
-		expect(DEFAULT_CONFIG.solo.backend?.command).toBe("codex");
+	it("DEFAULT_CONFIG leaves backend undefined for auto-detection", () => {
+		// No hardcoded backend — detectBackend picks the best available at runtime
+		// (env vars > CLIs on PATH > default). Override via config or --backend.
+		expect(DEFAULT_CONFIG.solo.backend).toBeUndefined();
+		expect(DEFAULT_CONFIG.solo.model).toBe("auto");
 	});
 
 	it("DEFAULT_CONFIG has a sane context window", () => {
@@ -73,6 +75,6 @@ describe("config", () => {
 	it("loadConfig returns defaults when no file exists", () => {
 		const cfg = loadConfig("/nonexistent/path/bpx-council.json");
 		expect(cfg.defaultMode).toBe("solo");
-		expect(cfg.solo.model).toBe("codex");
+		expect(cfg.solo.model).toBe("auto");
 	});
 });
