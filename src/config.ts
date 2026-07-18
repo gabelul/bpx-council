@@ -35,7 +35,7 @@ export interface BpxCouncilConfig {
 	contextWindow?: number;
 }
 
-const DEFAULT_CONFIG: BpxCouncilConfig = {
+export const DEFAULT_CONFIG: BpxCouncilConfig = {
 	defaultMode: "solo",
 	solo: {
 		model: "codex",

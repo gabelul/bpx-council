@@ -5,30 +5,25 @@
  * Usage:
  *   bpx-council "Should I use REST or GraphQL?"
  *   echo "context here" | bpx-council --question "Is this sane?"
- *   bpx-council --mode council --question "Architecture decision"
- *
- * Reads context from stdin (if piped) or uses the question alone. Routes the
- * fitted context to an advisor model (via a CLI backend like codex/claude, or
- * HTTP), prints the verdict to stdout. Designed to be called by any coding
- * agent (Claude Code, Codex, Cursor, pi) or a human at the terminal.
+ *   bpx-council --mode council "Architecture decision"
+ *   bpx-council --mode debate "Rewrite the parser, or patch it?"
+ *   bpx-council --mode gut-check "Does this smell off?"
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createInterface } from "node:readline";
-import { loadConfig, type BpxCouncilConfig } from "./config.js";
+import { loadConfig } from "./config.js";
 import { runSolo } from "./solo.js";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { runCouncil } from "./council.js";
+import { runDebate } from "./debate.js";
 
 // ---------------------------------------------------------------------------
-// Arg parsing — minimal, no dep. Flags + a positional question.
+// Arg parsing
 // ---------------------------------------------------------------------------
+
+type Mode = "solo" | "council" | "debate" | "gut-check";
 
 interface CliArgs {
 	question: string | undefined;
-	mode: "solo" | "council" | "debate" | "gut-check";
+	mode: Mode;
 	configPath: string | undefined;
 	help: boolean;
 }
@@ -38,8 +33,9 @@ function parseArgs(argv: string[]): CliArgs {
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "-h" || a === "--help") args.help = true;
-		else if (a === "--mode" || a === "-m") args.mode = (argv[++i] as CliArgs["mode"]) ?? "solo";
+		else if (a === "--mode" || a === "-m") args.mode = (argv[++i] as Mode) ?? "solo";
 		else if (a === "--config" || a === "-c") args.configPath = argv[++i];
+		else if (a === "--question" || a === "-q") args.question = argv[++i];
 		else if (!a.startsWith("-") && !args.question) args.question = a;
 	}
 	return args;
@@ -49,22 +45,32 @@ const HELP = `bpx-council — a portable multi-model council CLI.
 
 Usage:
   bpx-council "Should I use REST or GraphQL?"
-  echo "code/context here" | bpx-council --question "Is this auth flow sane?"
+  echo "code/context" | bpx-council --question "Is this auth flow sane?"
   bpx-council --mode council "Architecture: monolith or microservices?"
+  bpx-council --mode debate "Rewrite the parser, or patch it?"
+  bpx-council --mode gut-check "Does this smell off?"
 
 Options:
   -m, --mode <mode>    solo (default) | council | debate | gut-check
+  -q, --question <q>   The question (alternative to passing it positionally)
   -c, --config <path>  Path to config file (default: ~/.bpx-council.json)
   -h, --help           Show this help
 
 Context:
-  If stdin is piped, it's read as conversation context and fitted to the
-  advisor's window before being sent. If not, only the question is sent.
+  If stdin is piped, it's read as conversation context and prepended to the
+  question before being sent to the advisor(s). If not, only the question is sent.
+
+Modes:
+  solo        One advisor model, one response. Fast, cheap, the default.
+  council     Several models in parallel, each with a stance. A synthesizer
+              merges their verdicts. For real decisions.
+  debate      Advocate vs critic, sequential rounds, then a verdict. For
+              contentious calls where you want the strongest case on both sides.
+  gut-check   One advisor, terse output. The "does this smell off?" check.
 
 Config:
-  ~/.bpx-council.json — defines advisor models, personas, backends.
-  See --help config (TODO) for the schema. For now, if no config exists,
-  bpx-council uses sensible defaults (codex CLI if available).`;
+  ~/.bpx-council.json defines the advisor model and backend. Defaults to the
+  codex CLI (uses your ChatGPT subscription — no API key needed).`;
 
 // ---------------------------------------------------------------------------
 // Main
@@ -79,43 +85,63 @@ async function main(): Promise<void> {
 	}
 
 	if (!args.question) {
-		// If no question arg, try reading from stdin (piped context might contain it).
-		// For now, require a question.
 		console.error("Error: a question is required. Pass it as an argument or use --help.");
 		process.exit(1);
 	}
 
-	// Read piped stdin as context (if available).
+	// Read piped stdin as context.
 	let stdinContext = "";
 	if (!process.stdin.isTTY) {
-		stdinContext = await readStream(process.stdin);
+		stdinContext = await readStdin();
 	}
 
 	const config = loadConfig(args.configPath);
+	const commonArgs = { question: args.question, context: stdinContext || undefined, config };
 
-	const result = await runSolo({
-		question: args.question,
-		context: stdinContext || undefined,
-		config,
-	});
+	let result: { ok: true; text: string } | { ok: false; error: string };
+
+	switch (args.mode) {
+		case "council": {
+			const r = await runCouncil(commonArgs);
+			result = r.ok ? { ok: true, text: r.text } : { ok: false, error: r.error };
+			break;
+		}
+		case "debate": {
+			const r = await runDebate(commonArgs);
+			result = r;
+			break;
+		}
+		case "gut-check": {
+			// Gut-check = solo with terse instruction.
+			const r = await runSolo({
+				...commonArgs,
+				question: `${args.question}\n\n(Reply tersely — one or two sentences. Does this smell off?)`,
+			});
+			result = r;
+			break;
+		}
+		default: {
+			result = await runSolo(commonArgs);
+			break;
+		}
+	}
 
 	if (!result.ok) {
 		console.error(`Council failed: ${result.error}`);
 		process.exit(1);
 	}
 
-	// Print the verdict to stdout — agents/humans read this.
 	console.log(result.text);
 }
 
-function readStream(stream: NodeJS.ReadableStream): Promise<string> {
+function readStdin(): Promise<string> {
 	return new Promise((resolve) => {
 		let data = "";
-		const rl = createInterface({ input: stream });
-		rl.on("line", (line) => { data += line + "\n"; });
-		rl.on("close", () => resolve(data.trim()));
-		// Timeout: if no data in 100ms, assume no piped input.
-		setTimeout(() => { rl.close(); }, 100);
+		process.stdin.setEncoding("utf-8");
+		process.stdin.on("data", (chunk) => { data += chunk; });
+		process.stdin.on("end", () => resolve(data.trim()));
+		// If no data in 200ms, assume nothing piped.
+		setTimeout(() => resolve(data.trim()), 200);
 	});
 }
 
