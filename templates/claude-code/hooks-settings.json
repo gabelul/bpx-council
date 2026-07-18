@@ -1,0 +1,19 @@
+# Claude Code hooks config for bpx-council auto-trigger.
+#
+# Copy this into your .claude/settings.json (project) or ~/.claude/settings.json (global).
+# This adds a Stop hook that runs bpx-council after Claude finishes a turn and
+# feeds the advice back as context (the "steer" pattern).
+#
+# The hook fires on every Stop. To make it less frequent, adjust the command
+# (e.g., only run if the session is long, or only on certain file types).
+
+{
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "bpx-council --mode gut-check 'Review the work done this turn. Is the approach sound? Any risks?' 2>/dev/null || true"
+      }
+    ]
+  }
+}

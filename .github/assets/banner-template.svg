@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f0f0f"/>
+      <stop offset="100%" style="stop-color:#1a1a2e"/>
+    </linearGradient>
+    <!-- CUSTOMIZE: accent colors for your project -->
+    <linearGradient id="accent1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#a855f7"/>
+      <stop offset="100%" style="stop-color:#c084fc"/>
+    </linearGradient>
+    <linearGradient id="accent2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#2dd4bf"/>
+      <stop offset="100%" style="stop-color:#5eead4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="400" fill="url(#bg)" rx="12"/>
+
+  <!-- CUSTOMIZE: project name and subtitle -->
+  <text x="60" y="80" font-family="system-ui, -apple-system, sans-serif" font-size="48" font-weight="800" fill="white">{{PROJECT_NAME}}</text>
+  <text x="60" y="115" font-family="system-ui, -apple-system, sans-serif" font-size="18" fill="#888" font-weight="400">{{SHORT_DESCRIPTION}}</text>
+
+  <!-- CUSTOMIZE: left panel (before / problem / input) -->
+  <rect x="60" y="145" width="520" height="200" rx="8" fill="#1e1e2e" stroke="#a855f744" stroke-width="1"/>
+  <text x="80" y="175" font-family="ui-monospace, monospace" font-size="13" fill="#a855f7" font-weight="600">{{LEFT_PANEL_TITLE}}</text>
+  <line x1="80" y1="188" x2="560" y2="188" stroke="#ffffff11"/>
+  <!-- CUSTOMIZE: 4-5 lines of content -->
+  <text x="80" y="212" font-family="ui-monospace, monospace" font-size="12.5" fill="#666">{{LINE_1}}</text>
+  <text x="80" y="237" font-family="ui-monospace, monospace" font-size="12.5" fill="#666">{{LINE_2}}</text>
+  <text x="80" y="262" font-family="ui-monospace, monospace" font-size="12.5" fill="#666">{{LINE_3}}</text>
+  <text x="80" y="287" font-family="ui-monospace, monospace" font-size="12.5" fill="#666">{{LINE_4}}</text>
+
+  <!-- Arrow -->
+  <text x="600" y="255" font-family="system-ui, sans-serif" font-size="28" fill="#888">&#8594;</text>
+
+  <!-- CUSTOMIZE: right panel (after / solution / output) -->
+  <rect x="640" y="145" width="500" height="200" rx="8" fill="#1e1e2e" stroke="#2dd4bf44" stroke-width="1"/>
+  <text x="660" y="175" font-family="ui-monospace, monospace" font-size="13" fill="#2dd4bf" font-weight="600">{{RIGHT_PANEL_TITLE}}</text>
+  <line x1="660" y1="188" x2="1120" y2="188" stroke="#ffffff11"/>
+  <!-- CUSTOMIZE: 4-5 lines of content -->
+  <text x="660" y="212" font-family="ui-monospace, monospace" font-size="12.5" fill="#c8c8c8">{{LINE_1}}</text>
+  <text x="660" y="237" font-family="ui-monospace, monospace" font-size="12.5" fill="#c8c8c8">{{LINE_2}}</text>
+  <text x="660" y="262" font-family="ui-monospace, monospace" font-size="12.5" fill="#c8c8c8">{{LINE_3}}</text>
+  <text x="660" y="287" font-family="ui-monospace, monospace" font-size="12.5" fill="#c8c8c8">{{LINE_4}}</text>
+
+  <!-- CUSTOMIZE: bottom stats bar (5-6 key metrics) -->
+  <rect x="60" y="360" width="1080" height="28" rx="4" fill="#ffffff08"/>
+  <text x="80" y="379" font-family="ui-monospace, monospace" font-size="12" fill="#888">{{STAT_1}}</text>
+  <text x="230" y="379" font-family="ui-monospace, monospace" font-size="12" fill="#555">|</text>
+  <text x="250" y="379" font-family="ui-monospace, monospace" font-size="12" fill="#888">{{STAT_2}}</text>
+  <text x="430" y="379" font-family="ui-monospace, monospace" font-size="12" fill="#555">|</text>
+  <text x="450" y="379" font-family="ui-monospace, monospace" font-size="12" fill="#888">{{STAT_3}}</text>
+  <text x="630" y="379" font-family="ui-monospace, monospace" font-size="12" fill="#555">|</text>
+  <text x="650" y="379" font-family="ui-monospace, monospace" font-size="12" fill="#888">{{STAT_4}}</text>
+  <text x="850" y="379" font-family="ui-monospace, monospace" font-size="12" fill="#555">|</text>
+  <text x="870" y="379" font-family="ui-monospace, monospace" font-size="12" fill="#888">{{STAT_5}}</text>
+</svg>

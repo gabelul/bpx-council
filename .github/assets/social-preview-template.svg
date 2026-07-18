@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" fill="none">
+  <defs>
+    <linearGradient id="bg2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f0f0f"/>
+      <stop offset="100%" style="stop-color:#1a1a2e"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#bg2)"/>
+
+  <!-- CUSTOMIZE: project name -->
+  <text x="640" y="180" font-family="system-ui, -apple-system, sans-serif" font-size="72" font-weight="800" fill="white" text-anchor="middle">{{PROJECT_NAME}}</text>
+
+  <!-- CUSTOMIZE: subtitle -->
+  <text x="640" y="235" font-family="system-ui, -apple-system, sans-serif" font-size="24" fill="#aaa" text-anchor="middle" font-weight="400">{{SHORT_DESCRIPTION}}</text>
+
+  <!-- Divider -->
+  <line x1="400" y1="270" x2="880" y2="270" stroke="#ffffff15"/>
+
+  <!-- CUSTOMIZE: 4 key stats with accent colors -->
+  <text x="200" y="340" font-family="ui-monospace, monospace" font-size="42" fill="#a855f7" text-anchor="middle" font-weight="700">{{NUM_1}}</text>
+  <text x="200" y="370" font-family="system-ui, sans-serif" font-size="16" fill="#888" text-anchor="middle">{{LABEL_1}}</text>
+
+  <text x="440" y="340" font-family="ui-monospace, monospace" font-size="42" fill="#c084fc" text-anchor="middle" font-weight="700">{{NUM_2}}</text>
+  <text x="440" y="370" font-family="system-ui, sans-serif" font-size="16" fill="#888" text-anchor="middle">{{LABEL_2}}</text>
+
+  <text x="680" y="340" font-family="ui-monospace, monospace" font-size="42" fill="#2dd4bf" text-anchor="middle" font-weight="700">{{NUM_3}}</text>
+  <text x="680" y="370" font-family="system-ui, sans-serif" font-size="16" fill="#888" text-anchor="middle">{{LABEL_3}}</text>
+
+  <text x="920" y="340" font-family="ui-monospace, monospace" font-size="42" fill="#5eead4" text-anchor="middle" font-weight="700">{{NUM_4}}</text>
+  <text x="920" y="370" font-family="system-ui, sans-serif" font-size="16" fill="#888" text-anchor="middle">{{LABEL_4}}</text>
+
+  <!-- CUSTOMIZE: before/after teaser -->
+  <text x="640" y="460" font-family="ui-monospace, monospace" font-size="16" fill="#a855f7" text-anchor="middle">{{BEFORE_TEASER}}</text>
+  <text x="640" y="490" font-family="system-ui, sans-serif" font-size="22" fill="#555" text-anchor="middle">&#8595;</text>
+  <text x="640" y="520" font-family="ui-monospace, monospace" font-size="16" fill="#2dd4bf" text-anchor="middle">{{AFTER_TEASER}}</text>
+
+  <!-- Footer -->
+  <text x="640" y="610" font-family="system-ui, sans-serif" font-size="14" fill="#555" text-anchor="middle">gabelul/{{REPO_NAME}}  &#183;  {{LICENSE}}  &#183;  Booplex</text>
+</svg>

@@ -1,0 +1,13 @@
+# Claude Code local settings
+.claude/settings.local.json
+.claude/
+
+# macOS — resource forks sneak into staging on external drives
+.DS_Store
+._*
+
+# Node
+node_modules/
+
+# Build artifacts
+dist/

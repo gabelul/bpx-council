@@ -1,0 +1,51 @@
+{
+  "name": "@booplex/bpx-council",
+  "version": "0.0.0",
+  "description": "A portable multi-model council CLI — one advisor or a whole debating council, usable from any coding agent (Claude Code, Codex, Cursor, pi).",
+  "keywords": [
+    "cli",
+    "ai",
+    "advisor",
+    "council",
+    "multi-model",
+    "consensus",
+    "coding-agent",
+    "claude-code",
+    "codex",
+    "cursor"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "author": "gabelul",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gabelul/bpx-council.git"
+  },
+  "homepage": "https://github.com/gabelul/bpx-council#readme",
+  "bugs": {
+    "url": "https://github.com/gabelul/bpx-council/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "bpx-council": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "prompts/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0"
+  }
+}
