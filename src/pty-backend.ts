@@ -165,8 +165,11 @@ export async function callPtyAdvisor(
 			await sleep(3_000); // let it switch
 		}
 
-		// 4. Send the prompt (system + user message combined).
-		const fullPrompt = `${systemPrompt}\n\n---\n\n${userMessage}`;
+		// 4. Send the prompt wrapped in a sentinel marker — the sentinel uniquely
+		// identifies the response boundary in the captured pane, cutting through
+		// boot banner, MCP errors, and hook noise.
+		const SENTINEL = "[BPX-COUNCIL-RESPONSE-START]";
+		const fullPrompt = `${systemPrompt}\n\n---\n\n${userMessage}\n\n${SENTINEL}`;
 		const delivered = sendToPane(session, fullPrompt);
 		if (!delivered) {
 			return { ok: false, text: "", error: `Failed to deliver prompt to "${command}" after 3 attempts.` };
@@ -207,7 +210,7 @@ export async function callPtyAdvisor(
 		}
 
 		// 6. Extract the response from the pane.
-		const text = extractResponse(response, fullPrompt);
+		const text = extractResponse(response, SENTINEL);
 		if (!text.trim()) {
 			return { ok: false, text: "", error: `"${command}" responded but output couldn't be parsed.` };
 		}
@@ -228,53 +231,68 @@ function tmuxSendKeys(session: string, ...args: string[]): void {
 }
 
 /**
- * Extract the advisor's response from the captured (ANSI-stripped) pane.
+ * Extract the advisor's response using the sentinel boundary.
  *
- * After ANSI stripping, the pane contains: boot noise → the echoed prompt →
- * the response (indented/bulleted text) → the idle prompt cursor (›/❯/$).
- * We extract everything between the prompt echo and the cursor.
+ * The sentinel [BPX-COUNCIL-RESPONSE-START] is appended to the prompt. After
+ * the agent echoes it, everything between the sentinel and the next idle cursor
+ * is the response — minus known noise (hook errors, MCP warnings) that
+ * intersperse. This is far more reliable than content-matching the prompt.
  */
-function extractResponse(pane: string, sentPrompt: string): string {
-	const lines = pane.split("\n");
-	// Find the prompt echo (last occurrence, in case it appears multiple times).
-	const promptFragment = sentPrompt.slice(-60).split("\n")[0].trim().slice(0, 40);
-	let promptIdx = -1;
-	for (let i = lines.length - 1; i >= 0; i--) {
-		if (lines[i].includes(promptFragment)) { promptIdx = i; break; }
+function extractResponse(pane: string, sentinel: string): string {
+	// Find the sentinel in the captured output.
+	const sentinelIdx = pane.lastIndexOf(sentinel);
+	if (sentinelIdx === -1) {
+		// Sentinel not found — fallback to filtering noise from the whole pane.
+		return filterNoise(pane);
 	}
 
-	if (promptIdx === -1) {
-		// Fallback: take non-empty lines that aren't boot noise or status bar.
-		return lines
-			.filter((l) => {
-				const t = l.trim();
-				return t && !t.startsWith("⚠") && !t.startsWith("• Session") && !t.startsWith("• User")
-					&& !t.startsWith("• Stop") && !/Context.*left/i.test(t) && !/›/.test(t);
-			})
-			.map((l) => l.replace(/^[•│└├─\s]+/, "").trim())
-			.filter(Boolean)
-			.join("\n");
+	// Take everything after the sentinel.
+	const afterSentinel = pane.slice(sentinelIdx + sentinel.length);
+
+	// Cut at the first idle cursor (end of response).
+	const cursorMatch = afterSentinel.match(/\n[❯›>]\s/);
+	const responseBlock = cursorMatch
+		? afterSentinel.slice(0, cursorMatch.index)
+		: afterSentinel;
+
+	return filterNoise(responseBlock);
+}
+
+/** Filter known noise patterns from a response block. */
+function filterNoise(text: string): string {
+	const NOISE_PATTERNS = [
+		/^\s*[╭╰│─┬┴├┤┐└┘]+.*$/gm, // box-drawing borders
+		/^\s*✨.*$/gm, // update notices
+		/^\s*(Tip|tip):.*$/gm, // tips
+		/^\s*(Update|update) available.*$/gm,
+		/^\s*(Run npm|See full) .*$/gm,
+		/^\s*>_ .*$/gm, // codex banner (>_ OpenAI Codex)
+		/^\s*model:.*$/gm,
+		/^\s*directory:.*$/gm,
+		/^\s*or directory.*os error.*$/gm,
+		/^\s*⚠.*$/gm, // warnings
+		/^\s*error: hook exited.*$/gm, // hook errors
+		/^\s*• (Session|User|Stop|Post)\w* hook.*$/gm, // hook status lines
+		/^\s*MCP (client|server|startup).*$/gm, // MCP errors
+		/^\s*\[rmcp::.*$/gm, // rmcp transport errors
+		/^\s*can still see.*$/gm, // skill warnings
+		/^\s*skills or plugins.*$/gm, // skill warning fragment
+		/^\s*You have \d+ usage.*$/gm, // usage notices
+		/^\s*---\s*$/gm, // separators
+		/^\s*\[BPX-COUNCIL.*$/gm, // our own sentinel
+		/^\s*http:\/\/.*$/gm, // URLs from errors
+	];
+
+	let cleaned = text;
+	for (const pattern of NOISE_PATTERNS) {
+		cleaned = cleaned.replace(pattern, "");
 	}
 
-	// Take lines after the prompt, stop at idle cursor or status bar.
-	const responseLines: string[] = [];
-	for (let i = promptIdx + 1; i < lines.length; i++) {
-		const line = lines[i];
-		const trimmed = line.trim();
-		// Stop at the idle prompt cursor.
-		if (/^[❯›>]\s*$/.test(trimmed) || /^[❯›>]\s+/.test(trimmed)) break;
-		// Stop at the status bar.
-		if (/Context.*left/i.test(trimmed) || /monthly.*left/i.test(trimmed) || /weekly.*left/i.test(trimmed)) break;
-		// Skip boot noise, hook errors, and empty lines.
-		if (!trimmed) continue;
-		if (trimmed.startsWith("⚠") || trimmed.startsWith("• Session") || trimmed.startsWith("• User")
-			|| trimmed.startsWith("• Stop") || trimmed.startsWith("• Post")) continue;
-		// Strip bullet/list markers, keep content.
-		const cleaned = trimmed.replace(/^[•│└├─\s]+/, "").trim();
-		if (cleaned) responseLines.push(cleaned);
-	}
-
-	return responseLines.join("\n");
+	return cleaned
+		.split("\n")
+		.map((l) => l.replace(/^[•│└├─\s]+/, "").trim())
+		.filter(Boolean)
+		.join("\n");
 }
 
 function sleep(ms: number): Promise<void> {
