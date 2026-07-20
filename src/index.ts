@@ -15,35 +15,7 @@ import { detectBackend, type ExplicitBackend } from "./detect.js";
 import { runSolo } from "./solo.js";
 import { runCouncil } from "./council.js";
 import { runDebate } from "./debate.js";
-
-// ---------------------------------------------------------------------------
-// Arg parsing
-// ---------------------------------------------------------------------------
-
-type Mode = "solo" | "council" | "debate" | "gut-check";
-
-interface CliArgs {
-	question: string | undefined;
-	mode: Mode;
-	configPath: string | undefined;
-	backend: string | undefined;
-	model: string | undefined;
-	help: boolean;
-}
-
-function parseArgs(argv: string[]): CliArgs {
-	const args: CliArgs = { question: undefined, mode: "solo", configPath: undefined, backend: undefined, model: undefined, help: false };
-	for (let i = 0; i < argv.length; i++) {
-		const a = argv[i];
-		if (a === "-h" || a === "--help") args.help = true;
-		else if (a === "--mode" || a === "-m") args.mode = (argv[++i] as Mode) ?? "solo";
-		else if (a === "--config" || a === "-c") args.configPath = argv[++i];
-		else if (a === "--backend" || a === "-b") args.backend = argv[++i];
-		else if (a === "--question" || a === "-q") args.question = argv[++i];
-		else if (!a.startsWith("-") && !args.question) args.question = a;
-	}
-	return args;
-}
+import { parseArgs, type Mode } from "./args.js";
 
 const HELP = `bpx-council — a portable multi-model council CLI.
 
@@ -62,6 +34,10 @@ Options:
                       anthropic, openai, google (HTTP via API key in env)
       --model <id>     Override the model (e.g. claude-opus-4-20250514).
                       Also reads BPX_COUNCIL_MODEL / ANTHROPIC_MODEL env vars.
+      --rounds <n>     Debate rounds, 1-4 (default: 2). Each round is an
+                      advocate turn plus a critic turn.
+      --timeout <ms>   Per-call timeout (default: 120000). Raise it for long
+                      debates on meaty questions.
   -h, --help           Show this help
 
 Context:
@@ -90,6 +66,13 @@ async function main(): Promise<void> {
 	if (args.help) {
 		console.log(HELP);
 		return;
+	}
+
+	// Refuse unknown flags rather than guessing. Silently ignoring one is how
+	// `--model opus "Ship it?"` ended up asking the council "opus".
+	if (args.unknown.length > 0) {
+		console.error(`Error: unknown option ${args.unknown.join(", ")}. See --help.`);
+		process.exit(1);
 	}
 
 	if (!args.question) {
@@ -124,9 +107,17 @@ async function main(): Promise<void> {
 	if (modelOverride && config.solo.backend && (config.solo.backend as { type: string }).type === "http") {
 		(config.solo.backend as { model?: string }).model = modelOverride;
 	}
+	// --timeout raises the per-call ceiling. Debate makes up to nine sequential
+	// calls, so the default 120s is the difference between a verdict and a
+	// timeout on a meaty question.
+	if (args.timeoutMs && config.solo.backend) {
+		(config.solo.backend as { timeoutMs?: number }).timeoutMs = args.timeoutMs;
+	}
+
 	const commonArgs = { question: args.question, context: stdinContext || undefined, config };
 
-	let result: { ok: true; text: string } | { ok: false; error: string };
+	// `partial` is debate-only: rounds that completed before a later call failed.
+	let result: { ok: true; text: string } | { ok: false; error: string; partial?: string };
 
 	switch (args.mode) {
 		case "council": {
@@ -135,7 +126,7 @@ async function main(): Promise<void> {
 			break;
 		}
 		case "debate": {
-			const r = await runDebate(commonArgs);
+			const r = await runDebate({ ...commonArgs, rounds: args.rounds });
 			result = r;
 			break;
 		}
@@ -155,6 +146,10 @@ async function main(): Promise<void> {
 	}
 
 	if (!result.ok) {
+		// Print salvaged work to stdout first so a pipe or redirect still
+		// captures it, then fail loudly. Minutes of completed rounds shouldn't
+		// vanish because the last call timed out.
+		if (result.partial) console.log(result.partial);
 		console.error(`Council failed: ${result.error}`);
 		process.exit(1);
 	}
