@@ -29,6 +29,21 @@ Backends:
 - `src/http-backend.ts` — direct API calls (anthropic/openai/google)
 - `src/pty-backend.ts` — tmux/PTY path for subscription-preserving calls
 
+### Council is multi-model only when backends are assigned
+
+`council` resolves a backend **per persona**: `--backends` (positional) >
+`config.council.backends` (by persona name) > the shared `solo.backend`.
+
+With no assignment every persona runs on the same model — three stances, one
+model. That's a legitimate cheap mode, but it is *not* multi-model, and the
+word shouldn't be used for it. The distinction was false for the project's
+first three days; see troubleshooting.
+
+The resolved model rides on each member and prints in its header
+(`### critic [against] · claude`). Keep that — attribution is the reason to
+pay for several models, and without it the output looks identical to the
+single-model run.
+
 ### Multi-call modes: decide what survives a failure
 
 `council` and `debate` make several sequential or parallel model calls. Any

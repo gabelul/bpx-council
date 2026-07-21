@@ -31,7 +31,15 @@ export interface BackendResult {
 const PRESET_ARGS: Record<string, string[]> = {
 	codex: ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "-"],
 	claude: ["-p"],
-	opencode: ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "-"],
+	// opencode's CLI is `opencode run [message..]` — it has no `exec` command
+	// and none of codex's sandbox flags. This entry was a copy of the codex
+	// line, so every opencode call failed at arg parsing.
+	//
+	// UNVERIFIED end to end: opencode returns "Unexpected server error" in the
+	// environment this was fixed in, so the args are right per `--help` but the
+	// round trip hasn't been proven. Confirm against a working opencode before
+	// advertising it as supported.
+	opencode: ["run"],
 };
 
 /**

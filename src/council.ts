@@ -9,17 +9,37 @@
 
 import { callAdvisor, type BackendConfig, type BackendResult } from "./backend.js";
 import { DEFAULT_PERSONAS, SYNTHESIZER_PROMPT, type Persona } from "./personas.js";
+import { backendLabel, detectBackend, parseBackendArg } from "./detect.js";
 import type { BpxCouncilConfig } from "./config.js";
 
 export interface CouncilInput {
 	question: string;
 	context?: string;
 	config: BpxCouncilConfig;
+	/**
+	 * Backend specs assigned to personas in order, from `--backends`. Overrides
+	 * config. Fewer specs than personas is fine — the rest use the default.
+	 */
+	backends?: string[];
+}
+
+export interface CouncilMember {
+	persona: string;
+	stance: string;
+	/** Which backend answered, e.g. "codex" or "claude-sonnet-4". */
+	model: string;
+	ok: boolean;
+	text: string;
 }
 
 export type CouncilResult =
-	| { ok: true; text: string; members: Array<{ persona: string; stance: string; ok: boolean; text: string }> }
+	| { ok: true; text: string; members: CouncilMember[] }
 	| { ok: false; error: string };
+
+/** Progress to stderr — see the same note in debate.ts. */
+function note(line: string): void {
+	process.stderr.write(`${line}\n`);
+}
 
 const ADVISOR_BASE_PROMPT =
 	"You are an advisor model consulted by a coding agent. Be direct, cite specifics, " +
@@ -37,44 +57,75 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 		? `=== Context ===\n${context}\n\n=== Question ===\n${question}`
 		: question;
 
-	// Fan out — each persona gets its own CLI call in parallel.
-	const memberResults = await Promise.allSettled(
-		personas.map((persona) => callCouncilMember(persona, userMessage, backend)),
+	// Resolve a backend per persona. Precedence: --backends (positional) >
+	// config.council.backends (by persona name) > the shared default.
+	//
+	// This is what makes "multi-model" true rather than aspirational: without
+	// it, every persona was the same model wearing a different stance.
+	const assigned = personas.map((persona, i) => {
+		const spec = input.backends?.[i] ?? config.council?.backends?.[persona.name];
+		if (!spec) return { persona, backend, label: backendLabel(backend as never) };
+		const resolved = detectBackend(parseBackendArg(spec));
+		return { persona, backend: resolved as unknown as BackendConfig, label: backendLabel(resolved) };
+	});
+
+	const distinct = new Set(assigned.map((a) => a.label));
+	note(
+		distinct.size > 1
+			? `── council: ${assigned.map((a) => `${a.persona.name}→${a.label}`).join(", ")}`
+			: `── council: ${personas.length} personas on ${[...distinct][0]}`,
 	);
 
-	const members = personas.map((persona, i) => {
+	// Fan out — each persona gets its own call in parallel, on its own backend.
+	const memberResults = await Promise.allSettled(
+		assigned.map((a) => callCouncilMember(a.persona, userMessage, a.backend)),
+	);
+
+	const members: CouncilMember[] = assigned.map((a, i) => {
 		const r = memberResults[i];
-		if (r.status === "fulfilled") {
-			return { persona: persona.name, stance: persona.stance, ok: r.value.ok, text: r.value.text };
-		}
-		return { persona: persona.name, stance: persona.stance, ok: false, text: "" };
+		const base = { persona: a.persona.name, stance: a.persona.stance, model: a.label };
+		if (r.status === "fulfilled") return { ...base, ok: r.value.ok, text: r.value.text };
+		return { ...base, ok: false, text: "" };
 	});
+
+	for (const m of members) {
+		if (!m.ok) note(`⚠ ${m.persona} (${m.model}) did not answer — continuing without it.`);
+	}
 
 	const successful = members.filter((m) => m.ok);
 	if (successful.length === 0) {
 		return { ok: false, error: "All council members failed." };
 	}
 
-	// Build the synthesis input — each member's verdict under a header.
+	// Header carries the model, so a reader can see which one argued what —
+	// the entire reason to run members on different backends.
+	const header = (m: CouncilMember) => `### ${m.persona} [${m.stance}] · ${m.model}`;
+
+	const transcript = members
+		.filter((m) => m.ok)
+		.map((m) => `${header(m)}\n${m.text}`)
+		.join("\n\n");
+
 	const synthesisInput = members
-		.map((m) => `### ${m.persona} [${m.stance}]\n${m.ok ? m.text : `(failed: no response)`}`)
+		.map((m) => `${header(m)}\n${m.ok ? m.text : "(failed: no response)"}`)
 		.join("\n\n");
 
 	const synthMessage = `${synthesisInput}\n\n=== Original Question ===\n${question}`;
 
-	// Synthesize — one more CLI call that merges the verdicts.
+	// Synthesize — one more call that merges the verdicts.
+	note("── synthesizing verdict …");
 	const synthResult = await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, backend);
+	note("");
 
 	if (!synthResult.ok) {
-		// Synthesis failed — return the raw member verdicts so the caller gets something.
-		const fallback = members
-			.filter((m) => m.ok)
-			.map((m) => `### ${m.persona} [${m.stance}]\n${m.text}`)
-			.join("\n\n");
-		return { ok: true, text: fallback || "No usable output.", members };
+		// Synthesis failed — hand back the raw member verdicts so minutes of
+		// parallel work don't evaporate over the last call.
+		return { ok: true, text: transcript || "No usable output.", members };
 	}
 
-	return { ok: true, text: synthResult.text, members };
+	// Return the members *and* the verdict. Collapsing to the synthesis hides
+	// the disagreement, which is the thing worth paying several models for.
+	return { ok: true, text: `${transcript}\n\n### Verdict\n${synthResult.text}`, members };
 }
 
 async function callCouncilMember(
