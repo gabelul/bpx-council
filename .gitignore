@@ -11,3 +11,6 @@ node_modules/
 
 # Build artifacts
 dist/
+
+# Local agent state — session transcripts, project memory. Never commit.
+.omc/

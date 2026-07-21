@@ -214,6 +214,77 @@ A parameter with no path from the CLI is dead code that reads as a feature.
 
 ---
 
+## "Multi-model" was one model wearing three hats
+
+**Date:** 2026-07-21 · **Severity:** high — the headline claim was false
+
+**Symptom**
+
+`--mode council` describes itself as running "several models in parallel, each
+with a stance." Every reply came from the same model. Nothing in the output
+said otherwise, so it looked like three advisors agreeing — when it was one
+advisor asked three ways.
+
+**Root cause**
+
+`runCouncil` read a single backend and handed it to every persona:
+
+```ts
+const backend = (config.solo.backend ?? undefined) as BackendConfig | undefined;
+personas.map((persona) => callCouncilMember(persona, userMessage, backend));
+```
+
+`Persona` had `name`, `stance`, `systemPrompt` — no model or backend field, and
+no config path to give one. The mode was structurally single-model.
+
+The word "multi-model" appeared in five places: the npm description, the README
+H1, the GitHub repo description, the `multi-model` keyword, and this module's
+own docstring. All five described behaviour the code could not perform.
+
+**Fix**
+
+Per-persona backend resolution, precedence `--backends` > `config.council.backends`
+> shared default:
+
+```bash
+bpx-council --mode council --backends codex,claude,opencode "..."
+```
+
+Members carry the resolved model, and it appears in the output header
+(`### critic [against] · claude`) so disagreement is attributable. Personas
+without an assignment fall back to the shared backend, so existing configs
+behave exactly as before.
+
+**Files:** `src/council.ts`, `src/config.ts`, `src/detect.ts`, `src/args.ts`,
+`src/index.ts`, `tests/council-routing.test.ts`
+
+**Lesson**
+
+This was found by asking "can it use codex?" — a question about *usage*, not
+correctness. Reading the README and reading the code separately would not have
+caught it; the two only conflict when you hold them side by side.
+
+Any claim in a description is a testable assertion. "Multi-model," "parallel,"
+"zero-config" — each is either true of the code or it isn't. Audit them the way
+you'd audit a function's return value.
+
+---
+
+## Council also discarded its members' verdicts
+
+**Date:** 2026-07-21 · **Severity:** medium
+
+Same defect as debate mode, found while fixing the routing above: `runCouncil`
+built a `members` array, returned it, and `index.ts` printed only
+`synthResult.text`. Three personas argued and the user saw one paragraph.
+
+Fixed alongside the routing — output is now the member transcripts followed by
+`### Verdict`. Worth noting the pattern: **when two modes share a shape, a bug
+in one is usually in the other.** Debate's transcript bug and council's were
+the same bug, found six hours apart.
+
+---
+
 ## Testing note: `index.ts` used to run on import
 
 Importing `src/index.ts` executed `main()`, so any test touching it fired a

@@ -48,6 +48,38 @@ export function detectBackend(explicit?: ExplicitBackend): DetectedBackend {
 	return { type: "cli", command: "codex", timeoutMs: 120_000 };
 }
 
+/**
+ * Turn a backend spec string into an ExplicitBackend.
+ *
+ * Accepts a CLI name (codex, claude, opencode), an HTTP provider (anthropic,
+ * openai, google), or a PTY alias (tmux, pty, interactive). Anything else is
+ * assumed to be a CLI command name, so a custom advisor binary still works.
+ *
+ * Lives here rather than in index.ts because council mode resolves one of
+ * these per persona, and index.ts runs main() on import.
+ */
+export function parseBackendArg(arg: string): ExplicitBackend {
+	const cli = ["codex", "claude", "opencode"];
+	const http = ["anthropic", "openai", "google"];
+	const tmux = ["tmux", "pty", "interactive"];
+	if (cli.includes(arg)) return { type: "cli", command: arg };
+	if (http.includes(arg)) return { type: "http", provider: arg };
+	if (tmux.includes(arg)) return { type: "tmux", command: "codex" };
+	// Unknown — treat as a CLI command name.
+	return { type: "cli", command: arg };
+}
+
+/**
+ * A short label for a resolved backend, for display in council output.
+ *
+ * The whole point of running members on different models is being able to see
+ * who said what, so this ends up in the member headers.
+ */
+export function backendLabel(backend: DetectedBackend): string {
+	if (backend.type === "http") return backend.model ?? backend.provider ?? "http";
+	return (backend as { command?: string }).command ?? backend.type;
+}
+
 function resolveExplicit(explicit: ExplicitBackend): DetectedBackend {
 	if (explicit.type === "cli") {
 		return { type: "cli", command: explicit.command ?? "codex", timeoutMs: 120_000 };

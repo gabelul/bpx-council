@@ -32,9 +32,21 @@ export interface AdvisorConfig {
 	backend?: BackendConfig;
 }
 
+export interface CouncilConfig {
+	/**
+	 * Persona name → backend spec, e.g. `{ "architect": "codex", "critic": "claude" }`.
+	 *
+	 * This is what makes council mode actually multi-model. Any persona without
+	 * an entry falls back to the shared `solo.backend`, so a config that omits
+	 * this behaves exactly as before.
+	 */
+	backends?: Record<string, string>;
+}
+
 export interface BpxCouncilConfig {
 	defaultMode: "solo" | "council" | "debate" | "gut-check";
 	solo: AdvisorConfig;
+	council?: CouncilConfig;
 	/** Context window to fit the input to (tokens). Falls back to a per-backend default. */
 	contextWindow?: number;
 }

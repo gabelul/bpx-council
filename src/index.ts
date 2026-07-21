@@ -11,7 +11,7 @@
  */
 
 import { loadConfig } from "./config.js";
-import { detectBackend, type ExplicitBackend } from "./detect.js";
+import { detectBackend, parseBackendArg, type ExplicitBackend } from "./detect.js";
 import { runSolo } from "./solo.js";
 import { runCouncil } from "./council.js";
 import { runDebate } from "./debate.js";
@@ -38,6 +38,11 @@ Options:
                       advocate turn plus a critic turn.
       --timeout <ms>   Per-call timeout (default: 120000). Raise it for long
                       debates on meaty questions.
+      --backends <a,b> Council mode: one backend per persona, in order
+                      (architect, critic, simplifier). This is what makes a
+                      council genuinely multi-model:
+                        --mode council --backends codex,claude,opencode
+                      Personas without a backend use the default.
   -h, --help           Show this help
 
 Context:
@@ -121,7 +126,7 @@ async function main(): Promise<void> {
 
 	switch (args.mode) {
 		case "council": {
-			const r = await runCouncil(commonArgs);
+			const r = await runCouncil({ ...commonArgs, backends: args.backends });
 			result = r.ok ? { ok: true, text: r.text } : { ok: false, error: r.error };
 			break;
 		}
@@ -155,17 +160,6 @@ async function main(): Promise<void> {
 	}
 
 	console.log(result.text);
-}
-
-function parseBackendArg(arg: string): ExplicitBackend {
-	const cli = ["codex", "claude", "opencode"];
-	const http = ["anthropic", "openai", "google"];
-	const tmux = ["tmux", "pty", "interactive"];
-	if (cli.includes(arg)) return { type: "cli", command: arg };
-	if (http.includes(arg)) return { type: "http", provider: arg };
-	if (tmux.includes(arg)) return { type: "tmux", command: "codex" };
-	// Unknown — treat as a CLI command name.
-	return { type: "cli", command: arg };
 }
 
 function readStdin(): Promise<string> {

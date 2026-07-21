@@ -15,6 +15,11 @@ export interface CliArgs {
 	model: string | undefined;
 	rounds: number | undefined;
 	timeoutMs: number | undefined;
+	/**
+	 * Council mode: one backend per persona, in order.
+	 * `--backends codex,claude,opencode` → architect, critic, simplifier.
+	 */
+	backends: string[] | undefined;
 	help: boolean;
 	/** Flags we don't recognise. The caller should refuse to run — see below. */
 	unknown: string[];
@@ -29,6 +34,7 @@ export function parseArgs(argv: string[]): CliArgs {
 		model: undefined,
 		rounds: undefined,
 		timeoutMs: undefined,
+		backends: undefined,
 		help: false,
 		unknown: [],
 	};
@@ -43,6 +49,12 @@ export function parseArgs(argv: string[]): CliArgs {
 		else if (a === "--model") args.model = argv[++i];
 		else if (a === "--rounds") args.rounds = Number(argv[++i]) || undefined;
 		else if (a === "--timeout") args.timeoutMs = Number(argv[++i]) || undefined;
+		else if (a === "--backends") {
+			// Comma-separated, trimmed. Empty entries dropped so "codex,,claude"
+			// doesn't silently assign a blank backend to the critic.
+			const specs = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+			args.backends = specs.length > 0 ? specs : undefined;
+		}
 		// An unrecognised flag used to fall through to the bare-word branch
 		// below, where its *argument* became the question and the real question
 		// was dropped — `--model opus "Ship it?"` quietly asked "opus". Collect
