@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.1.0](https://github.com/gabelul/bpx-council/compare/v1.0.0...v1.1.0) (2026-07-21)
+
+
+### Features
+
+* make council genuinely multi-model via per-persona backends ([#3](https://github.com/gabelul/bpx-council/issues/3)) ([498ac4f](https://github.com/gabelul/bpx-council/commit/498ac4f9ee3bb0844ab9a2d56e71fef6ba48c44e))
+
+
+### Bug Fixes
+
+* **ci:** Node 24 + remove empty NODE_AUTH_TOKEN for OIDC publishing ([c7ecbc0](https://github.com/gabelul/bpx-council/commit/c7ecbc097b58779ae0c1593a2fe4fb1f5a92cffb))
+* five bugs from battle testing — model flag, debate output, partial failure, progress, rounds ([74f07cc](https://github.com/gabelul/bpx-council/commit/74f07cc8c5b53fa65ac6648f4d40657c6b6a5c1d))
+
 ## 1.0.0 (2026-07-19)
 
 
