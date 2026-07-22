@@ -50,6 +50,7 @@ import { basename, dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { AGENTS, findAgent, TEMPLATES_ROOT, type AgentDef, type InstallAction, type Scope } from "./agents.js";
 import { runMultiselect } from "./multiselect.js";
+import { bold, cyan, dim, green, red, yellow } from "./style.js";
 
 /** Markers that make the AGENTS.md block replaceable instead of duplicable. */
 const BLOCK_START = "<!-- bpx-council:start -->";
@@ -806,16 +807,16 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 
 	// Report what we're not doing before what we are.
 	for (const { agent, reason } of skipped) {
-		console.error(`Skipping ${agent.label}: ${reason}`);
+		console.error(`${yellow("skip")} ${agent.label} ${dim(`— ${reason}`)}`);
 	}
 	if (plan.length === 0) {
-		console.error(`Nothing to install for scope "${scope}".`);
+		console.error(red(`Nothing to install for scope "${scope}".`));
 		return 1;
 	}
 
 	const touchesProjectFiles = plan.some(({ agent }) => agent.scopes.includes("project") && scope === "project");
 	if (touchesProjectFiles && !looksLikeProjectRoot(cwd)) {
-		console.error(`\nWarning: ${cwd} doesn't look like a project root (no .git, package.json, …).`);
+		console.error(yellow(`\nWarning: ${cwd} doesn't look like a project root (no .git, package.json, …).`));
 	}
 
 	// One canonical copy + symlinks, or a copy per agent. Built once, so the
@@ -823,32 +824,32 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 	const groups = buildGroups(plan, scope, cwd, link);
 
 	// Show the plan before touching anything.
-	const mode = link ? " · link mode" : "";
-	console.log(`\nInstalling bpx-council (${scope} scope${mode})\n`);
+	const mode = link ? ` ${dim("·")} ${cyan("link mode")}` : "";
+	console.log(`\n${bold("Plan")}  ${dim(`${scope} scope`)}${mode}\n`);
 	let anyBlocked = false;
 	for (const { label, actions } of groups) {
-		console.log(`  ${label}`);
+		console.log(`  ${bold(label)}`);
 		for (const a of actions) {
 			const preview = previewAction(a);
 			if (preview === "blocked") anyBlocked = true;
-			console.log(`    [${preview}] ${a.dest}`);
-			console.log(`      ${a.label}`);
+			console.log(`    ${previewTag(preview)} ${dim(a.dest)}`);
+			console.log(`        ${dim(a.label)}`);
 		}
 	}
 	if (anyBlocked) {
-		console.log("\n  [blocked] = an edited copy is already there; it'll be left alone, not replaced.");
+		console.log(`\n  ${yellow("[blocked]")} ${dim("= an edited copy is already there; it'll be left alone, not replaced.")}`);
 	}
 	console.log();
 
 	if (opts.dryRun) {
-		console.log("Dry run — nothing written.");
+		console.log(dim("Dry run — nothing written."));
 		return 0;
 	}
 
 	if (interactive) {
 		const ok = await confirm("Write these files?", true);
 		if (!ok) {
-			console.log("Cancelled.");
+			console.log(dim("Cancelled."));
 			return 0;
 		}
 		console.log();
@@ -859,23 +860,55 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 		for (const a of actions) {
 			const result = applyAction(a);
 			if (result.outcome === "failed") failures++;
-			const mark = result.outcome === "failed" ? "!" : result.outcome === "unchanged" ? "=" : "+";
-			const detail = result.detail ? ` (${result.detail})` : "";
-			console.log(`  ${mark} ${label}: ${a.dest}${detail}`);
+			const mark =
+				result.outcome === "failed" ? red("✗") : result.outcome === "unchanged" ? dim("·") : green("✓");
+			const detail = result.detail ? dim(` (${result.detail})`) : "";
+			console.log(`  ${mark} ${label}${dim(":")} ${dim(a.dest)}${detail}`);
 		}
 	}
 
 	console.log();
 	if (failures > 0) {
-		console.error(`${failures} action(s) failed — those files were left untouched.`);
+		console.error(red(`${failures} action(s) failed — those files were left untouched.`));
 		return 1;
 	}
 
-	console.log("Done. Restart your agent so it picks up the new files.");
+	console.log(`${green("✓")} ${bold("Done.")} ${dim("Restart your agent so it picks up the new files.")}`);
 	if (!withHook) {
-		console.log("Tip: `bpx-council install --with-hook` adds a Stop hook that gut-checks every turn.");
+		console.log(dim(`  Tip: \`bpx-council install --with-hook\` gut-checks after every turn.`));
 	}
+	printStarNudge();
 	return 0;
+}
+
+/** A coloured `[create]`/`[overwrite]`/… tag for the plan. */
+function previewTag(preview: ActionPreview): string {
+	switch (preview) {
+		case "create":
+			return green("[create]");
+		case "overwrite":
+			return yellow("[overwrite]");
+		case "merge":
+			return cyan("[merge]");
+		case "blocked":
+			return yellow("[blocked]");
+		default:
+			return dim("[current]");
+	}
+}
+
+/**
+ * A quiet "a star helps" line after a successful interactive install.
+ *
+ * Only on a real terminal — a scripted install shouldn't get marketing in its
+ * logs. One star, warm, not naggy; the whole tool is free.
+ */
+function printStarNudge(): void {
+	if (!process.stdout.isTTY) return;
+	console.log();
+	console.log(`  ${yellow("★")} ${dim("If the council saved you a bad call, a star helps others find it:")}`);
+	console.log(`    ${cyan("https://github.com/gabelul/bpx-council")}`);
+	console.log(`    ${dim("gh repo star gabelul/bpx-council")}`);
 }
 
 interface WizardAnswers {
@@ -887,7 +920,7 @@ interface WizardAnswers {
 
 /** The interactive flow. Returns undefined if the user picked nothing. */
 async function promptWizard(detected: AgentDef[]): Promise<WizardAnswers | undefined> {
-	console.log("\nbpx-council install\n");
+	console.log(`\n${bold(cyan("bpx-council"))} ${dim("· wire it into your coding agents")}\n`);
 
 	const agents = await selectAgents(detected);
 	if (agents === null) return undefined; // cancelled

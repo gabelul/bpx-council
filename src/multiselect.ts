@@ -18,6 +18,7 @@
  */
 
 import { emitKeypressEvents, type Key } from "node:readline";
+import { bold, cyan, dim, green } from "./style.js";
 
 const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
@@ -63,15 +64,21 @@ export function chosen(state: MultiselectState): number[] {
  * @param width - Column budget; each line is clipped to it so nothing wraps.
  */
 export function render(state: MultiselectState, header: string, width = 80): string {
-	const clip = (s: string) => (s.length > width ? `${s.slice(0, Math.max(0, width - 1))}…` : s);
-	const lines = [clip(header)];
+	const clip = (s: string, w: number) => (s.length > w ? `${s.slice(0, Math.max(0, w - 1))}…` : s);
+	// Clip the plain label BEFORE colouring — ANSI codes would throw off a
+	// length-based clip. The fixed prefix "  ❯ ◉ " is 6 visible columns.
+	const labelWidth = Math.max(4, width - 6);
+
+	const lines = [dim(clip(header, width))];
 	state.items.forEach((label, i) => {
-		const pointer = i === state.cursor ? "❯" : " ";
-		const box = state.selected.has(i) ? "◉" : "◯";
-		lines.push(clip(`  ${pointer} ${box} ${label}`));
+		const atCursor = i === state.cursor;
+		const pointer = atCursor ? cyan("❯") : " ";
+		const box = state.selected.has(i) ? green("◉") : "◯";
+		const text = clip(label, labelWidth);
+		lines.push(`  ${pointer} ${box} ${atCursor ? bold(text) : text}`);
 	});
 	lines.push("");
-	lines.push(clip("  ↑↓ move · space toggle · a all · enter confirm · esc cancel"));
+	lines.push(dim(clip("  ↑↓ move · space toggle · a all · enter confirm · esc cancel", width)));
 	return `${lines.join("\n")}\n`;
 }
 
