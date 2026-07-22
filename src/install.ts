@@ -49,6 +49,7 @@ import { homedir, platform } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { AGENTS, findAgent, TEMPLATES_ROOT, type AgentDef, type InstallAction, type Scope } from "./agents.js";
+import { runMultiselect } from "./multiselect.js";
 
 /** Markers that make the AGENTS.md block replaceable instead of duplicable. */
 const BLOCK_START = "<!-- bpx-council:start -->";
@@ -886,21 +887,16 @@ interface WizardAnswers {
 
 /** The interactive flow. Returns undefined if the user picked nothing. */
 async function promptWizard(detected: AgentDef[]): Promise<WizardAnswers | undefined> {
+	console.log("\nbpx-council install\n");
+
+	const agents = await selectAgents(detected);
+	if (agents === null) return undefined; // cancelled
+	if (agents.length === 0) return undefined;
+
+	// The rest are simple yes/no and one/two questions — a plain readline is the
+	// right tool. Raw mode from the multiselect is already restored by now.
 	const rl = createInterface({ input: process.stdin, output: process.stdout });
 	try {
-		console.log("\nbpx-council install\n");
-		console.log("Found on this machine:\n");
-		AGENTS.forEach((agent, i) => {
-			const mark = detected.includes(agent) ? "detected" : "not detected";
-			console.log(`  ${i + 1}. ${agent.label} (${mark})`);
-		});
-
-		const defaultPicks = AGENTS.map((a, i) => (detected.includes(a) ? i + 1 : 0)).filter(Boolean);
-		const pickAnswer = await rl.question(`\nWhich? (comma-separated, default: ${defaultPicks.join(",")}) `);
-		const picks = parsePicks(pickAnswer, defaultPicks, AGENTS.length);
-		const agents = picks.map((n) => AGENTS[n - 1]).filter(Boolean);
-		if (agents.length === 0) return undefined;
-
 		// Only ask about scope if something we picked can actually vary.
 		const scopeVaries = agents.some((a) => a.scopes.length > 1);
 		let scope: Scope = "project";
@@ -929,6 +925,40 @@ async function promptWizard(detected: AgentDef[]): Promise<WizardAnswers | undef
 				: false;
 
 		return { agents, scope, withHook, link };
+	} finally {
+		rl.close();
+	}
+}
+
+/**
+ * Pick which agents to install into.
+ *
+ * A real terminal gets the checkbox multiselect (arrows + space); anything else
+ * falls back to comma-separated entry. Detected agents are pre-checked either
+ * way. Returns null if the user cancelled, or the chosen AgentDefs.
+ */
+async function selectAgents(detected: AgentDef[]): Promise<AgentDef[] | null> {
+	const initial = AGENTS.map((a, i) => (detected.includes(a) ? i : -1)).filter((i) => i >= 0);
+	const labels = AGENTS.map((a) => `${a.label}${detected.includes(a) ? "" : "  (not detected)"}`);
+
+	if (process.stdin.isTTY) {
+		const picked = await runMultiselect("Which agents? (space to toggle, enter to confirm)", labels, initial);
+		if (picked === null) return null;
+		return picked.map((i) => AGENTS[i]).filter(Boolean);
+	}
+
+	// Non-TTY fallback: the old comma-separated prompt.
+	const rl = createInterface({ input: process.stdin, output: process.stdout });
+	try {
+		console.log("Found on this machine:\n");
+		AGENTS.forEach((agent, i) => {
+			console.log(`  ${i + 1}. ${agent.label} (${detected.includes(agent) ? "detected" : "not detected"})`);
+		});
+		const defaults = initial.map((i) => i + 1);
+		const answer = await rl.question(`\nWhich? (comma-separated, default: ${defaults.join(",")}) `);
+		return parsePicks(answer, defaults, AGENTS.length)
+			.map((n) => AGENTS[n - 1])
+			.filter(Boolean);
 	} finally {
 		rl.close();
 	}
