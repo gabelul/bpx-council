@@ -16,6 +16,7 @@ import { runSolo } from "./solo.js";
 import { runCouncil } from "./council.js";
 import { runDebate } from "./debate.js";
 import { parseArgs, type Mode } from "./args.js";
+import { runInstall } from "./install.js";
 
 const HELP = `bpx-council — a portable multi-model council CLI.
 
@@ -25,6 +26,12 @@ Usage:
   bpx-council --mode council "Architecture: monolith or microservices?"
   bpx-council --mode debate "Rewrite the parser, or patch it?"
   bpx-council --mode gut-check "Does this smell off?"
+
+Commands:
+  install              Wire bpx-council into the coding agents on this machine
+                      (Claude Code skill + slash command, Codex skill,
+                      AGENTS.md block). Interactive by default.
+                      See "bpx-council install --help".
 
 Options:
   -m, --mode <mode>    solo (default) | council | debate | gut-check
@@ -61,12 +68,81 @@ Config:
   ~/.bpx-council.json defines the advisor model and backend. Defaults to the
   codex CLI (uses your ChatGPT subscription — no API key needed).`;
 
+const INSTALL_HELP = `bpx-council install — wire the council into your coding agents.
+
+Installing the CLI teaches you it exists. It teaches your agent nothing —
+agents discover capabilities from files in their own config tree. This puts
+those files there.
+
+Usage:
+  bpx-council install                    Interactive wizard (recommended)
+  bpx-council install --dry-run          Show the plan, write nothing
+  bpx-council install --agent claude-code --scope global --yes
+
+What gets written:
+  Claude Code    skills/bpx-council/SKILL.md  (auto-triggers on "second
+                 opinion", "council", "gut check")
+                 commands/council.md          (/council slash command)
+                 settings.json                (Stop hook, only with --with-hook)
+  Codex          ~/.codex/skills/bpx-council/SKILL.md (global)
+  agents-skills  .agents/skills/bpx-council/SKILL.md — the shared project
+                 convention read by Cursor, Codex, Gemini CLI, Copilot,
+                 OpenCode, Zed, and others (one copy, whole cluster)
+  AGENTS.md      an instruction block, for anything that reads AGENTS.md
+
+Options:
+      --agent <id>   claude-code | codex | agents-skills | agents-md.
+                    Repeatable, or comma-separated. Omit to be asked.
+      --scope <s>    project (default) | global. Codex skills are global-only.
+      --with-hook    Also add the Claude Code Stop hook. It gut-checks after
+                    every turn, which costs a model call every turn — hence
+                    opt-in.
+      --link         Symlink each agent's skill dir at one canonical copy
+                    (.agents/skills) instead of duplicating it — update once,
+                    every agent sees it. Opt-in: symlinks are fragile on
+                    Windows and in git clones, so copy is the default, and any
+                    link that can't be made falls back to a copy.
+  -y, --yes          Skip prompts, take the defaults.
+      --dry-run      Print the plan and exit.
+  -h, --help         This.
+
+Files you own are never rewritten: settings.json gets a structural merge and
+AGENTS.md gets a marker-delimited block, both idempotent. If either is in a
+shape we don't recognise — unparseable JSON, a half-deleted block — the install
+refuses and says so rather than guessing.
+
+The skill and command files are ours, so a reinstall replaces them. The plan
+marks those [overwrite] before writing, and --dry-run shows it without writing.`;
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
+
+	// `install` short-circuits everything below — it writes files instead of
+	// asking a model anything, so none of the backend resolution applies.
+	if (args.command === "install") {
+		if (args.help) {
+			console.log(INSTALL_HELP);
+			return;
+		}
+		if (args.unknown.length > 0) {
+			console.error(`Error: unknown option ${args.unknown.join(", ")}. See "bpx-council install --help".`);
+			process.exit(1);
+		}
+		const code = await runInstall({
+			agents: args.install.agents,
+			scope: args.install.scope,
+			withHook: args.install.withHook,
+			yes: args.install.yes,
+			dryRun: args.install.dryRun,
+			link: args.install.link,
+		});
+		if (code !== 0) process.exit(code);
+		return;
+	}
 
 	if (args.help) {
 		console.log(HELP);

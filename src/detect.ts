@@ -114,7 +114,13 @@ function detectFromPath(): DetectedBackend | undefined {
 	return undefined;
 }
 
-function isOnPath(cmd: string): boolean {
+/**
+ * Is `cmd` runnable from PATH?
+ *
+ * Exported because the installer detects agent CLIs the same way this module
+ * detects advisor CLIs — one `which` wrapper, not two.
+ */
+export function isOnPath(cmd: string): boolean {
 	try {
 		execSync(`which ${cmd}`, { stdio: "ignore", timeout: 2000 });
 		return true;
