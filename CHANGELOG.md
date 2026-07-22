@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/gabelul/bpx-council/compare/v1.2.0...v1.3.0) (2026-07-22)
+
+
+### Features
+
+* version flag, update notice, and onboarding nudges ([#6](https://github.com/gabelul/bpx-council/issues/6)) ([76073e4](https://github.com/gabelul/bpx-council/commit/76073e4664c9e23b7b0073819465f74ba09ea9e3))
+
 ## [1.2.0](https://github.com/gabelul/bpx-council/compare/v1.1.0...v1.2.0) (2026-07-22)
 
 
