@@ -1,15 +1,22 @@
-## bpx-council — AI advisor
+<!-- bpx-council:start -->
+## bpx-council — second opinions
 
-This project uses [bpx-council](https://github.com/gabelul/bpx-council), a CLI that gets a second opinion or multi-model council before committing to a direction.
+This project has [bpx-council](https://github.com/gabelul/bpx-council) available: a CLI that gets a second opinion from a different model, or a council of them arguing, before you commit to a direction.
 
-When to use it:
-- Before architecture decisions
-- When stuck on a bug
-- Before declaring a task done
+Reach for it before an architecture decision you'd have to unwind later, when you've been circling the same bug for a while, or before declaring a task done.
 
 ```bash
-bpx-council "Should I use REST or GraphQL?"
+# One strong second opinion. Seconds.
+bpx-council "Is this auth flow sane?"
+
+# Pipe in the real thing rather than your summary of it
+git diff HEAD~3 | bpx-council --question "Review this for correctness"
+
+# Three models, three stances, synthesized verdict. Minutes.
 bpx-council --mode council "Monolith or microservices?"
 ```
 
+It's an advisor, not an authority. If your own evidence contradicts the verdict, trust your evidence and say so.
+
 Install: `npm install -g @booplex/bpx-council`
+<!-- bpx-council:end -->

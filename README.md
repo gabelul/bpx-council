@@ -67,6 +67,7 @@ direct over HTTP instead. Once you like it:
 
 ```bash
 npm install -g @booplex/bpx-council
+bpx-council install     # teach your coding agent it exists — see below
 ```
 
 ## Modes
@@ -125,15 +126,68 @@ HTTP backends (`anthropic`, `openai`, `google`) need the matching `*_API_KEY`.
 
 ## Wiring it into your agent
 
-It's a CLI, so anything that runs shell commands can call it. For tighter
-integration there are templates in `templates/`:
+Installing the CLI teaches *you* that the council exists. It teaches your agent
+nothing — agents discover what they can do from files in their own config tree.
+So there's a command that puts those files there:
 
-| Agent | What you get | Template |
+```bash
+bpx-council install
+```
+
+It checks which agents are actually on your machine, asks what to wire up and
+whether you want it for this project or globally, shows you the plan, and waits
+for a yes before writing anything.
+
+| Agent | What it gets | Where |
 |---|---|---|
-| Claude Code | Skill (trigger words), slash command, Stop hook | `templates/claude-code/` |
-| Codex | `SKILL.md` auto-activation | `templates/codex/` |
-| Cursor / Copilot / Aider | Instruction snippet | `templates/agents-md/` |
-| pi | [bpx-consult](https://github.com/gabelul/bpx-mono/tree/main/packages/bpx-consult) — deeper: auto-triggers, steer, interactive menu |
+| Claude Code | Skill (auto-triggers on "second opinion", "council", "gut check"), `/council` command, optional Stop hook | `.claude/` or `~/.claude/` |
+| Codex | Same skill, same format | `~/.codex/skills/` (global) |
+| Cursor, Codex, Gemini CLI, Copilot, OpenCode, Zed, … | Same skill via the shared `.agents/skills/` convention — one copy, read by the whole cluster | `.agents/skills/` (project) |
+| Anything that reads `AGENTS.md` | Instruction block | project root |
+| pi | [bpx-consult](https://github.com/gabelul/bpx-mono/tree/main/packages/bpx-consult) — deeper: auto-triggers, steer, interactive menu | — |
+
+`.agents/skills/` is an emerging cross-agent convention (it's the shared project
+path in [vercel-labs/skills](https://github.com/vercel-labs/skills)' agent
+table). One skill copy there reaches a whole cluster instead of one agent. The
+list above is that convention, not a per-agent guarantee — if your agent doesn't
+pick it up, the `AGENTS.md` block is the universal fallback.
+
+Two of those destinations are files you already own. `settings.json` gets a
+structural merge and `AGENTS.md` gets a marker-delimited block, so your existing
+hooks and house rules survive, and re-running updates in place instead of
+stacking duplicates. If either file is in a shape it doesn't recognise —
+unparseable JSON, a half-deleted block — it refuses and tells you, rather than
+guessing which text was yours. The skill and command files *are* replaced on
+reinstall; the plan marks those `[overwrite]` first.
+
+Headless, for dotfiles and CI:
+
+```bash
+bpx-council install --dry-run                              # show the plan, write nothing
+bpx-council install --agent claude-code --scope global -y
+bpx-council install --with-hook                            # + gut-check after every turn
+bpx-council install --link                                 # one canonical copy, symlinked
+```
+
+**Link mode (`--link`).** By default each agent gets its own copy of the skill.
+With `--link`, one canonical copy lives at `.agents/skills/bpx-council` and every
+agent's skill dir is a symlink to it — edit once, they all see it. It's the same
+scheme [vercel-labs/skills](https://github.com/vercel-labs/skills) uses. Copy is
+the default because symlinks are fragile across Windows, committed git trees, and
+Docker builds; on Windows link mode uses a junction, and any link that can't be
+made falls back to a copy automatically. An agent dir you've *edited* is never
+replaced by a link — it's left alone with a note.
+
+One caveat: a reinstall re-syncs the canonical copy from the bundled template, so
+hand-edits to `.agents/skills/bpx-council` itself don't survive an upgrade. It's
+a distribution point, not a place to fork the skill.
+
+The Stop hook is opt-in because it fires a council call on every turn, and
+that's a model call every turn. Worth it sometimes, not by default.
+
+Everything's a CLI underneath, so if your agent isn't on that list it can still
+just run `bpx-council` in a shell. The templates live in `templates/` if you'd
+rather place them yourself.
 
 ## Options
 
