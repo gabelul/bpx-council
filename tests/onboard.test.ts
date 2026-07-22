@@ -16,12 +16,24 @@ import { anySkillInstalled } from "../src/onboard.js";
 
 describe("anySkillInstalled", () => {
 	let dir: string;
+	let home: string;
+	let prevHome: string | undefined;
 
 	beforeEach(() => {
 		dir = mkdtempSync(join(tmpdir(), "bpx-onboard-"));
+		// anySkillInstalled also checks GLOBAL dests under homedir(), so isolate
+		// HOME — otherwise a real global install on the dev machine leaks in and
+		// makes "fresh project" assertions flaky. (This is exactly how the test
+		// first failed: after a real `install --scope global`.)
+		home = mkdtempSync(join(tmpdir(), "bpx-home-"));
+		prevHome = process.env.HOME;
+		process.env.HOME = home;
 	});
 	afterEach(() => {
+		if (prevHome === undefined) delete process.env.HOME;
+		else process.env.HOME = prevHome;
 		rmSync(dir, { recursive: true, force: true });
+		rmSync(home, { recursive: true, force: true });
 	});
 
 	it("is false in a fresh project with nothing installed", () => {
