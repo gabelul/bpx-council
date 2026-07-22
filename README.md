@@ -70,6 +70,23 @@ npm install -g @booplex/bpx-council
 bpx-council install     # teach your coding agent it exists — see below
 ```
 
+## Updating
+
+```bash
+npm install -g @booplex/bpx-council@latest   # get the newest version
+bpx-council install                          # re-run to refresh the agent files
+```
+
+Two steps on purpose. Updating the npm package **doesn't** touch your agent
+files — nothing writes into `~/.claude` or `AGENTS.md` behind your back on an
+`npm install`. Re-run `bpx-council install` to pull in new or changed skills; it's
+idempotent, so running it again is safe.
+
+`bpx-council --version` shows what you've got. The CLI also checks for a newer
+version at most once a day and prints a one-line notice on **stderr** (so it
+never touches piped output). Silence it with `NO_UPDATE_NOTIFIER=1`; it's already
+quiet in CI and when output isn't a terminal.
+
 ## Modes
 
 ```bash
