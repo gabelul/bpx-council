@@ -33,7 +33,7 @@
   },
   "files": [
     "dist/",
-    "prompts/",
+    "templates/",
     "README.md",
     "LICENSE"
   ],
