@@ -17,6 +17,8 @@ import { runCouncil } from "./council.js";
 import { runDebate } from "./debate.js";
 import { parseArgs, type Mode } from "./args.js";
 import { runInstall } from "./install.js";
+import { maybeNotifyUpdate, readPackageMeta } from "./update-check.js";
+import { maybeOnboard } from "./onboard.js";
 
 const HELP = `bpx-council — a portable multi-model council CLI.
 
@@ -51,6 +53,7 @@ Options:
                         --mode council --backends codex,claude,opencode
                       Personas without a backend use the default.
   -h, --help           Show this help
+  -v, --version        Print the installed version and exit
 
 Context:
   If stdin is piped, it's read as conversation context and prepended to the
@@ -120,6 +123,13 @@ marks those [overwrite] before writing, and --dry-run shows it without writing.`
 
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
+
+	// --version short-circuits everything, including the update check — you
+	// asked what you have, not whether something newer exists.
+	if (args.version) {
+		console.log(readPackageMeta().version);
+		return;
+	}
 
 	// `install` short-circuits everything below — it writes files instead of
 	// asking a model anything, so none of the backend resolution applies.
@@ -236,6 +246,16 @@ async function main(): Promise<void> {
 	}
 
 	console.log(result.text);
+
+	// After the answer's on stdout: on a fresh interactive run with nothing
+	// wired up, offer the wizard once. If it prompted, skip the update notice —
+	// one post-answer interruption is plenty.
+	const prompted = await maybeOnboard(process.cwd());
+	if (!prompted) {
+		// Prints from cache, refreshes in a detached child — see update-check.
+		// Non-blocking, stderr-only, never throws.
+		maybeNotifyUpdate(readPackageMeta());
+	}
 }
 
 function readStdin(): Promise<string> {

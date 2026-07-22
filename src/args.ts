@@ -44,6 +44,8 @@ export interface CliArgs {
 	 */
 	backends: string[] | undefined;
 	help: boolean;
+	/** Print the version and exit. */
+	version: boolean;
 	/** Flags we don't recognise. The caller should refuse to run — see below. */
 	unknown: string[];
 }
@@ -61,6 +63,7 @@ export function parseArgs(argv: string[]): CliArgs {
 		timeoutMs: undefined,
 		backends: undefined,
 		help: false,
+		version: false,
 		unknown: [],
 	};
 
@@ -76,6 +79,7 @@ export function parseArgs(argv: string[]): CliArgs {
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "-h" || a === "--help") args.help = true;
+		else if (a === "--version" || a === "-v" || a === "-V") args.version = true;
 		else if (a === "--mode" || a === "-m") {
 			// Validate rather than cast. `--mode counsel` (a plausible typo)
 			// used to fall through to the solo branch and answer as if nothing

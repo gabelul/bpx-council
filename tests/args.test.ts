@@ -70,6 +70,12 @@ describe("parseArgs", () => {
 		expect(parseArgs(["--help"]).help).toBe(true);
 	});
 
+	it("parses --version / -v without treating it as unknown", () => {
+		expect(parseArgs(["--version"]).version).toBe(true);
+		expect(parseArgs(["-v"]).version).toBe(true);
+		expect(parseArgs(["--version"]).unknown).toHaveLength(0);
+	});
+
 	it("defaults to the consult command", () => {
 		expect(parseArgs(["Should I ship this?"]).command).toBe("consult");
 	});
