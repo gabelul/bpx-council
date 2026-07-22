@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/gabelul/bpx-council/compare/v1.3.0...v1.4.0) (2026-07-22)
+
+
+### Features
+
+* checkbox multi-select in install wizard (+ postinstall hint fix) ([#8](https://github.com/gabelul/bpx-council/issues/8)) ([14c347e](https://github.com/gabelul/bpx-council/commit/14c347ed5b605864b4af76eba973a4979a402763))
+
 ## [1.3.0](https://github.com/gabelul/bpx-council/compare/v1.2.0...v1.3.0) (2026-07-22)
 
 
