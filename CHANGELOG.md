@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/gabelul/bpx-council/compare/v1.4.0...v1.5.0) (2026-07-22)
+
+
+### Features
+
+* colored, organized install output with a star nudge ([#10](https://github.com/gabelul/bpx-council/issues/10)) ([f63c6c4](https://github.com/gabelul/bpx-council/commit/f63c6c4fc12211d7077fe462b00b7dadc8188121))
+
 ## [1.4.0](https://github.com/gabelul/bpx-council/compare/v1.3.0...v1.4.0) (2026-07-22)
 
 
