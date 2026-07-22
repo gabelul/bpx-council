@@ -9,13 +9,22 @@
  * --ignore-scripts. The wizard is something you choose to run — this just makes
  * sure you know it's there.
  *
- * Guarded to a real terminal on a global install, so it stays silent
- * everywhere it would be noise. Never throws: a hint must not fail an install.
+ * Gated to global installs only (never fires for a dependency install or in a
+ * project's `npm ci`). It does NOT check `process.stdout.isTTY`: npm pipes
+ * lifecycle-script stdio, so isTTY is never true here — that guard silently
+ * suppressed the hint everywhere, which is the whole reason it didn't show.
+ *
+ * Honest caveat: default npm (v7+) buffers and hides postinstall output unless
+ * you pass `--foreground-scripts`, so this reliably surfaces only on package
+ * managers that show it (yarn classic, pnpm in some modes, `npm
+ * --foreground-scripts`). The dependable nudge is the first-run prompt inside
+ * the CLI itself — see src/onboard.ts. This is a best-effort bonus on top.
+ *
+ * Never throws: a hint must not fail an install.
  */
 
 try {
-	const isGlobal = process.env.npm_config_global === "true";
-	if (isGlobal && process.stdout.isTTY) {
+	if (process.env.npm_config_global === "true") {
 		process.stdout.write(
 			"\n  bpx-council installed.\n" +
 				"  Wire it into your coding agents (Claude Code, Codex, Cursor, …):\n\n" +
