@@ -1,6 +1,6 @@
 {
   "name": "@booplex/bpx-council",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A portable multi-model council CLI — one advisor or a whole debating council, usable from any coding agent (Claude Code, Codex, Cursor, pi).",
   "keywords": [
     "cli",

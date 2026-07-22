@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/gabelul/bpx-council/compare/v1.1.0...v1.2.0) (2026-07-22)
+
+
+### Features
+
+* add install wizard for coding agents with link mode ([#4](https://github.com/gabelul/bpx-council/issues/4)) ([b8c94ce](https://github.com/gabelul/bpx-council/commit/b8c94cec184eadf2bf5168d1c391af58fca09394))
+
 ## [1.1.0](https://github.com/gabelul/bpx-council/compare/v1.0.0...v1.1.0) (2026-07-21)
 
 
