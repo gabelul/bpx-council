@@ -34,13 +34,15 @@
   "files": [
     "dist/",
     "templates/",
+    "scripts/postinstall.mjs",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postinstall": "node scripts/postinstall.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

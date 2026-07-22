@@ -18,6 +18,7 @@ import { runDebate } from "./debate.js";
 import { parseArgs, type Mode } from "./args.js";
 import { runInstall } from "./install.js";
 import { maybeNotifyUpdate, readPackageMeta } from "./update-check.js";
+import { maybeOnboard } from "./onboard.js";
 
 const HELP = `bpx-council — a portable multi-model council CLI.
 
@@ -246,10 +247,15 @@ async function main(): Promise<void> {
 
 	console.log(result.text);
 
-	// The answer is already on stdout, so an update notice here adds no latency
-	// to what you came for. Prints from cache, refreshes in a detached child —
-	// see update-check. Non-blocking, stderr-only, never throws.
-	maybeNotifyUpdate(readPackageMeta());
+	// After the answer's on stdout: on a fresh interactive run with nothing
+	// wired up, offer the wizard once. If it prompted, skip the update notice —
+	// one post-answer interruption is plenty.
+	const prompted = await maybeOnboard(process.cwd());
+	if (!prompted) {
+		// Prints from cache, refreshes in a detached child — see update-check.
+		// Non-blocking, stderr-only, never throws.
+		maybeNotifyUpdate(readPackageMeta());
+	}
 }
 
 function readStdin(): Promise<string> {

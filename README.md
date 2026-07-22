@@ -70,6 +70,10 @@ npm install -g @booplex/bpx-council
 bpx-council install     # teach your coding agent it exists — see below
 ```
 
+The `install` step is deliberately separate — nothing writes into your editor
+config on an `npm install`. If you skip it, the first time you run `bpx-council`
+in a real terminal it'll offer to set that up for you, once.
+
 ## Updating
 
 ```bash
