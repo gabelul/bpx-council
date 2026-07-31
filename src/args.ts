@@ -14,7 +14,7 @@ export type Mode = (typeof MODES)[number];
  * Subcommand. `consult` is the default and the historical behaviour — a bare
  * `bpx-council "question"` still works exactly as before.
  */
-export type Command = "consult" | "install";
+export type Command = "consult" | "install" | "config" | "setup";
 
 export interface InstallArgs {
 	/** `--agent` may be repeated or comma-separated. Empty means "ask". */
@@ -27,10 +27,23 @@ export interface InstallArgs {
 	link: boolean;
 }
 
+/** Flags for `config` and `setup` — the tool-config wizard. */
+export interface ConfigureArgs {
+	backend: string | undefined;
+	model: string | undefined;
+	mode: Mode | undefined;
+	/** Which config file to write: project `.bpx-council.json` or global. */
+	scope: "project" | "global" | undefined;
+	yes: boolean;
+	dryRun: boolean;
+}
+
 export interface CliArgs {
 	command: Command;
 	/** Only meaningful when `command === "install"`. */
 	install: InstallArgs;
+	/** Only meaningful when `command === "config"` or `"setup"`. */
+	configure: ConfigureArgs;
 	question: string | undefined;
 	mode: Mode;
 	configPath: string | undefined;
@@ -54,6 +67,7 @@ export function parseArgs(argv: string[]): CliArgs {
 	const args: CliArgs = {
 		command: "consult",
 		install: { agents: [], scope: undefined, withHook: false, yes: false, dryRun: false, link: false },
+		configure: { backend: undefined, model: undefined, mode: undefined, scope: undefined, yes: false, dryRun: false },
 		question: undefined,
 		mode: "solo",
 		configPath: undefined,
@@ -74,6 +88,10 @@ export function parseArgs(argv: string[]): CliArgs {
 	if (argv[0] === "install") {
 		args.command = "install";
 		return parseInstallArgs(argv.slice(1), args);
+	}
+	if (argv[0] === "config" || argv[0] === "setup") {
+		args.command = argv[0];
+		return parseConfigureArgs(argv.slice(1), args);
 	}
 
 	for (let i = 0; i < argv.length; i++) {
@@ -170,5 +188,62 @@ function parseInstallArgs(argv: string[], args: CliArgs): CliArgs {
 
 	// De-dupe so --agent codex --agent codex doesn't plan the same write twice.
 	args.install.agents = [...new Set(args.install.agents)];
+	return args;
+}
+
+/**
+ * Flags for `config` and `setup`. All optional — bare `config` launches the
+ * wizard; these drive it headless for dotfiles/CI.
+ *
+ * @param argv - Arguments after the subcommand.
+ * @param args - The partially built result to fill in.
+ */
+function parseConfigureArgs(argv: string[], args: CliArgs): CliArgs {
+	for (let i = 0; i < argv.length; i++) {
+		const a = argv[i];
+		if (a === "-h" || a === "--help") args.help = true;
+		else if (a === "--backend" || a === "-b") {
+			const value = takeValue(argv, i);
+			if (value === undefined) args.unknown.push("--backend (missing value)");
+			else {
+				i++;
+				args.configure.backend = value;
+			}
+		} else if (a === "--model") {
+			const value = takeValue(argv, i);
+			if (value === undefined) args.unknown.push("--model (missing value)");
+			else {
+				i++;
+				args.configure.model = value;
+			}
+		} else if (a === "--mode" || a === "-m") {
+			const value = takeValue(argv, i);
+			if (value !== undefined && (MODES as readonly string[]).includes(value)) {
+				i++;
+				args.configure.mode = value as Mode;
+			} else {
+				if (value !== undefined) i++;
+				args.unknown.push(`--mode ${value ?? ""}`.trim());
+			}
+		} else if (a === "--scope") {
+			const value = takeValue(argv, i);
+			if (value === "project" || value === "global") {
+				i++;
+				args.configure.scope = value;
+			} else {
+				if (value !== undefined) i++;
+				args.unknown.push(`--scope ${value ?? ""}`.trim());
+			}
+		} else if (a === "--config" || a === "-c") {
+			const value = takeValue(argv, i);
+			if (value === undefined) args.unknown.push("--config (missing value)");
+			else {
+				i++;
+				args.configPath = value;
+			}
+		} else if (a === "-y" || a === "--yes") args.configure.yes = true;
+		else if (a === "--dry-run") args.configure.dryRun = true;
+		else args.unknown.push(a);
+	}
 	return args;
 }

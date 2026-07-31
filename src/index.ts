@@ -10,7 +10,7 @@
  *   bpx-council --mode gut-check "Does this smell off?"
  */
 
-import { loadConfig } from "./config.js";
+import { resolveConfig } from "./config.js";
 import { detectBackend, parseBackendArg, type ExplicitBackend } from "./detect.js";
 import { runSolo } from "./solo.js";
 import { runCouncil } from "./council.js";
@@ -19,6 +19,8 @@ import { parseArgs, type Mode } from "./args.js";
 import { runInstall } from "./install.js";
 import { maybeNotifyUpdate, readPackageMeta } from "./update-check.js";
 import { maybeOnboard } from "./onboard.js";
+import { runConfig } from "./config-wizard.js";
+import { runSetup } from "./setup.js";
 
 const HELP = `bpx-council — a portable multi-model council CLI.
 
@@ -30,6 +32,10 @@ Usage:
   bpx-council --mode gut-check "Does this smell off?"
 
 Commands:
+  config               Configure the advisor — default mode, backend, model,
+                      and council personas — into ~/.bpx-council.json.
+  setup                config, then offer to wire into your coding agents.
+                      The one-command onboarding.
   install              Wire bpx-council into the coding agents on this machine
                       (Claude Code skill + slash command, Codex skill,
                       AGENTS.md block). Interactive by default.
@@ -70,6 +76,40 @@ Modes:
 Config:
   ~/.bpx-council.json defines the advisor model and backend. Defaults to the
   codex CLI (uses your ChatGPT subscription — no API key needed).`;
+
+const CONFIG_HELP = `bpx-council config / setup — configure your advisor.
+
+bpx-council works with zero config (it auto-detects a backend). This is the
+optional deepening: pin a backend and model, save a multi-model council, or
+change the default mode — written to ~/.bpx-council.json.
+
+  config   Just the advisor config.
+  setup    config, then offer to wire bpx-council into your coding agents
+           (runs the installer). The one-command onboarding.
+
+Usage:
+  bpx-council config                 Interactive wizard (recommended)
+  bpx-council setup                  Configure, then offer agent install
+  bpx-council config --dry-run       Show what it'd write, write nothing
+  bpx-council config --backend codex --model gpt-5-codex --mode solo --yes
+
+Options:
+  -b, --backend <name>  Advisor backend: codex | claude | opencode | anthropic
+      --model <id>      Pin the advisor's model (blank = the backend's default)
+  -m, --mode <mode>     solo (default) | council | debate | gut-check
+      --scope <s>       global (default, ~/.bpx-council.json) | project
+                       (.bpx-council.json in the repo — commit it to share a
+                       council with your team). At runtime, a project config
+                       layers over global: it overrides only the keys it sets.
+  -c, --config <path>   Write/read this exact file instead (wins over --scope).
+  -y, --yes             Skip prompts, take the flags/defaults.
+      --dry-run         Print the plan and exit.
+  -h, --help            This.
+
+An existing config is merged, not clobbered — keys the wizard doesn't manage
+(and any council you keep) survive. An unparseable config is refused, not
+overwritten. The multi-model council is set up interactively; --yes writes the
+core advisor config and keeps any council you already had.`;
 
 const INSTALL_HELP = `bpx-council install — wire the council into your coding agents.
 
@@ -154,6 +194,32 @@ async function main(): Promise<void> {
 		return;
 	}
 
+	// `config` / `setup` short-circuit the same way — they write ~/.bpx-council.json
+	// (and setup then offers the agent installer), not a model call.
+	if (args.command === "config" || args.command === "setup") {
+		if (args.help) {
+			console.log(CONFIG_HELP);
+			return;
+		}
+		if (args.unknown.length > 0) {
+			console.error(`Error: unknown option ${args.unknown.join(", ")}. See "bpx-council ${args.command} --help".`);
+			process.exit(1);
+		}
+		const configOpts = {
+			backend: args.configure.backend,
+			model: args.configure.model,
+			mode: args.configure.mode,
+			scope: args.configure.scope,
+			yes: args.configure.yes,
+			dryRun: args.configure.dryRun,
+			configPath: args.configPath,
+			cwd: process.cwd(),
+		};
+		const code = args.command === "setup" ? await runSetup(configOpts) : await runConfig(configOpts);
+		if (code !== 0) process.exit(code);
+		return;
+	}
+
 	if (args.help) {
 		console.log(HELP);
 		return;
@@ -177,7 +243,8 @@ async function main(): Promise<void> {
 		stdinContext = await readStdin();
 	}
 
-	const config = loadConfig(args.configPath);
+	// Layered: defaults ← global ← the repo's .bpx-council.json (discovered from cwd).
+	const config = resolveConfig(args.configPath, process.cwd());
 
 	// Auto-detect the backend if not explicitly configured. Override chain:
 	// --backend arg > config file > env vars (ANTHROPIC_API_KEY etc.) > CLIs on
@@ -191,11 +258,12 @@ async function main(): Promise<void> {
 	}
 
 	// Model override: --model flag > BPX_COUNCIL_MODEL env > ANTHROPIC_MODEL env.
-	// For HTTP backends, this sets which model the API call targets. For CLI
-	// backends it's informational (the CLI picks its own model). This is how a
-	// user running Claude Code on Sonnet can make the advisor use Opus, or match.
+	// Applies to BOTH backend types now — HTTP sets the API model directly, CLI
+	// gets it injected as the CLI's own --model flag (so `--backend codex --model
+	// gpt-5-codex` really runs codex on that model). This is how a user on Claude
+	// Code's Sonnet can make the advisor use Opus, or point codex at a model.
 	const modelOverride = args.model ?? process.env.BPX_COUNCIL_MODEL ?? process.env.ANTHROPIC_MODEL;
-	if (modelOverride && config.solo.backend && (config.solo.backend as { type: string }).type === "http") {
+	if (modelOverride && config.solo.backend) {
 		(config.solo.backend as { model?: string }).model = modelOverride;
 	}
 	// --timeout raises the per-call ceiling. Debate makes up to nine sequential

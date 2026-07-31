@@ -164,3 +164,45 @@ describe("parseArgs — install subcommand", () => {
 		expect(args.install.dryRun).toBe(false);
 	});
 });
+
+describe("parseArgs — config / setup subcommands", () => {
+	it("recognises config and setup in the first position only", () => {
+		expect(parseArgs(["config"]).command).toBe("config");
+		expect(parseArgs(["setup"]).command).toBe("setup");
+		// Not hijacked mid-question — "should I config this?" is a fair ask.
+		expect(parseArgs(["should I config this?"]).command).toBe("consult");
+	});
+
+	it("parses config flags", () => {
+		const args = parseArgs(["config", "--backend", "codex", "--model", "gpt-5-codex", "--mode", "council", "--yes"]);
+		expect(args.configure.backend).toBe("codex");
+		expect(args.configure.model).toBe("gpt-5-codex");
+		expect(args.configure.mode).toBe("council");
+		expect(args.configure.yes).toBe(true);
+	});
+
+	it("shares flags between config and setup", () => {
+		const args = parseArgs(["setup", "--backend", "claude", "--dry-run"]);
+		expect(args.command).toBe("setup");
+		expect(args.configure.backend).toBe("claude");
+		expect(args.configure.dryRun).toBe(true);
+	});
+
+	it("rejects a bad --mode and a missing --backend value", () => {
+		expect(parseArgs(["config", "--mode", "counsel"]).unknown.length).toBeGreaterThan(0);
+		expect(parseArgs(["config", "--backend"]).unknown.length).toBeGreaterThan(0);
+	});
+
+	it("parses --scope project/global and rejects anything else", () => {
+		expect(parseArgs(["config", "--scope", "project"]).configure.scope).toBe("project");
+		expect(parseArgs(["config", "--scope", "global"]).configure.scope).toBe("global");
+		const bad = parseArgs(["config", "--scope", "repo"]);
+		expect(bad.configure.scope).toBeUndefined();
+		expect(bad.unknown.length).toBeGreaterThan(0);
+	});
+
+	it("supports --help and --config path", () => {
+		expect(parseArgs(["config", "--help"]).help).toBe(true);
+		expect(parseArgs(["config", "--config", "/tmp/x.json"]).configPath).toBe("/tmp/x.json");
+	});
+});
