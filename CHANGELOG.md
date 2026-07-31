@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.6.0](https://github.com/gabelul/bpx-council/compare/v1.5.0...v1.6.0) (2026-07-31)
+
+
+### Features
+
+* add a config wizard and a one-command setup ([3587596](https://github.com/gabelul/bpx-council/commit/3587596bf4dd98d06555b99ee6aef89f8c154f9b))
+* add cursor, gemini, qwen, crush and amp as advisor backends ([38a76c6](https://github.com/gabelul/bpx-council/commit/38a76c6a02a2a7f5012c99c4c5d7423a92e0ec2c))
+* arrow-key pickers and a type-to-filter model picker ([7b2006b](https://github.com/gabelul/bpx-council/commit/7b2006b9daa079e3b44ab1a114306443327e0581))
+* layer a per-project .bpx-council.json over the global config ([de9f057](https://github.com/gabelul/bpx-council/commit/de9f057f906ebaa1201ab49839d3579ab5ec0c9a))
+* pin a model per backend with backend:model specs ([0ec7424](https://github.com/gabelul/bpx-council/commit/0ec742481f23e55f3d34b5598f98fadfd9a54420))
+
 ## [1.5.0](https://github.com/gabelul/bpx-council/compare/v1.4.0...v1.5.0) (2026-07-22)
 
 
