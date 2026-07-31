@@ -17,11 +17,8 @@
  * when stdin isn't one.
  */
 
-import { emitKeypressEvents, type Key } from "node:readline";
+import { runKeyLoop } from "./interactive.js";
 import { bold, cyan, dim, green } from "./style.js";
-
-const HIDE_CURSOR = "\x1b[?25l";
-const SHOW_CURSOR = "\x1b[?25h";
 
 export interface MultiselectState {
 	items: string[];
@@ -90,72 +87,19 @@ export function render(state: MultiselectState, header: string, width = 80): str
  * @returns Selected indices (ascending) or null on cancel.
  */
 export function runMultiselect(header: string, items: string[], initial: number[]): Promise<number[] | null> {
-	return new Promise((resolve) => {
-		const input = process.stdin;
-		const out = process.stderr;
-		const state = initState(items, initial);
-
-		emitKeypressEvents(input);
-		let raw = false;
-		try {
-			input.setRawMode(true);
-			raw = true;
-		} catch {
-			// No raw mode available — the caller shouldn't have reached here, but
-			// don't wedge: just resolve with the pre-checked defaults.
-			resolve(chosen(state));
-			return;
-		}
-		input.resume();
-		out.write(HIDE_CURSOR);
-
-		let lastLines = 0;
-		const draw = () => {
-			if (lastLines > 0) out.write(`\x1b[${lastLines}A`); // up to the block's first line
-			out.write("\x1b[0J"); // clear from cursor to end of screen
-			const text = render(state, header, out.columns || 80);
-			out.write(text);
-			lastLines = (text.match(/\n/g) ?? []).length;
-		};
-
-		const cleanup = () => {
-			input.removeListener("keypress", onKey);
-			if (raw) {
-				try {
-					input.setRawMode(false);
-				} catch {
-					// Best-effort — nothing more we can do.
-				}
-			}
-			input.pause();
-			out.write(`${SHOW_CURSOR}\n`);
-		};
-
-		const onKey = (str: string | undefined, key: Key | undefined) => {
+	const state = initState(items, initial);
+	return runKeyLoop<number[]>(
+		() => render(state, header, process.stderr.columns || 80),
+		(str, key, ctx) => {
 			if (!key) return;
-			if (key.ctrl && key.name === "c") {
-				cleanup();
-				process.exit(130);
-			}
-			if (key.name === "escape" || key.name === "q") {
-				cleanup();
-				resolve(null);
-				return;
-			}
-			if (key.name === "return" || key.name === "enter") {
-				cleanup();
-				resolve(chosen(state));
-				return;
-			}
+			if (key.name === "escape" || key.name === "q") return ctx.done(null);
+			if (key.name === "return" || key.name === "enter") return ctx.done(chosen(state));
 			if (key.name === "up" || key.name === "k") move(state, -1);
 			else if (key.name === "down" || key.name === "j") move(state, 1);
 			else if (str === " " || key.name === "space") toggleCurrent(state);
 			else if (key.name === "a") toggleAll(state);
 			else return; // ignore keys we don't handle, no redraw
-			draw();
-		};
-
-		input.on("keypress", onKey);
-		draw();
-	});
+			ctx.redraw();
+		},
+	);
 }
