@@ -28,7 +28,7 @@ const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; apiKeyEnv: string; mo
 	anthropic: {
 		baseUrl: "https://api.anthropic.com",
 		apiKeyEnv: "ANTHROPIC_API_KEY",
-		model: "claude-sonnet-4-20250514",
+		model: "claude-opus-4-8",
 	},
 	openai: {
 		baseUrl: "https://api.openai.com",
