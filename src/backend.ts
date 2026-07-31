@@ -1,15 +1,21 @@
 /**
  * backend — shared CLI subprocess advisor caller.
  *
- * Spawns an advisor CLI (codex/claude/opencode), pipes the prompt to stdin,
- * parses the reply. Used by solo, council (one call per member), and the
- * synthesizer. Tolerant of junk preamble (deprecation notices, auth chatter).
+ * Spawns an advisor CLI (codex/claude/opencode/cursor-agent/gemini/…), hands it
+ * the prompt the way that CLI wants it, parses the reply. Used by solo, council
+ * (one call per member), and the synthesizer. Tolerant of junk preamble
+ * (deprecation notices, auth chatter).
+ *
+ * How each CLI is driven — args, prompt delivery, output shape — lives in the
+ * cli-registry, not here. This file is the spawn-and-pipe machinery; the registry
+ * is the per-tool knowledge.
  *
  * Lifted from bpx-consult's cli-backend.ts — same defensive parsing, same
  * spawn-and-pipe pattern, but standalone (no pi dependency).
  */
 
 import { spawn } from "node:child_process";
+import { cliSpecOrGeneric } from "./cli-registry.js";
 import { callHttpAdvisor, type HttpBackendConfig } from "./http-backend.js";
 import { callPtyAdvisor, type PtyBackendConfig } from "./pty-backend.js";
 
@@ -20,6 +26,12 @@ export interface CliBackendConfig {
 	command: string;
 	args?: string[];
 	timeoutMs?: number;
+	/**
+	 * Pin the CLI's model. Injected as that CLI's own `--model` flag (codex,
+	 * claude, and opencode all take one). Omit to let the CLI use its configured
+	 * default. Ignored when `args` is set — then you're supplying the full args.
+	 */
+	model?: string;
 }
 
 export interface BackendResult {
@@ -28,23 +40,22 @@ export interface BackendResult {
 	error?: string;
 }
 
-const PRESET_ARGS: Record<string, string[]> = {
-	codex: ["exec", "--sandbox", "read-only", "--skip-git-repo-check", "-"],
-	claude: ["-p"],
-	// opencode's CLI is `opencode run [message..]` — it has no `exec` command
-	// and none of codex's sandbox flags. This entry was a copy of the codex
-	// line, so every opencode call failed at arg parsing.
-	//
-	// UNVERIFIED end to end: opencode returns "Unexpected server error" in the
-	// environment this was fixed in, so the args are right per `--help` but the
-	// round trip hasn't been proven. Confirm against a working opencode before
-	// advertising it as supported.
-	opencode: ["run"],
-};
+/**
+ * Build the CLI args (minus the prompt), injecting the model flag when pinned.
+ *
+ * Delegates to the registry so the per-tool knowledge lives in one place; each
+ * CLI takes its model flag in its own spot (codex/opencode after their
+ * subcommand, claude/gemini up front). When no model is set, the CLI uses its
+ * own configured default.
+ */
+export function cliArgsFor(command: string, model?: string): string[] {
+	return cliSpecOrGeneric(command).runArgs(model);
+}
 
 /**
- * Run one CLI advisor call. Spawns the subprocess, pipes the prompt, collects
- * stdout/stderr, resolves on close. Never throws — failures return {ok:false}.
+ * Run one CLI advisor call. Spawns the subprocess, hands over the prompt the way
+ * that CLI expects (stdin or trailing arg), collects stdout/stderr, resolves on
+ * close. Never throws — failures return {ok:false}.
  */
 export function callCliAdvisor(
 	systemPrompt: string,
@@ -52,9 +63,16 @@ export function callCliAdvisor(
 	backend: CliBackendConfig,
 ): Promise<BackendResult> {
 	const command = backend.command;
-	const args = backend.args?.length ? backend.args : PRESET_ARGS[command] ?? [];
+	const spec = cliSpecOrGeneric(command);
+	// Explicit args win outright; otherwise build from the registry, injecting the
+	// pinned model as the CLI's own flag.
+	const baseArgs = backend.args?.length ? backend.args : spec.runArgs(backend.model);
 	const timeoutMs = backend.timeoutMs ?? 120_000;
 	const promptText = `${systemPrompt}\n\n---\n\n=== User ===\n${userMessage}\n`;
+	// stdin CLIs read the prompt off the pipe; arg CLIs want it as the last argv
+	// entry (the value of their trailing -p/-x, or a positional prompt).
+	const viaArg = spec.prompt === "arg";
+	const args = viaArg ? [...baseArgs, promptText] : baseArgs;
 
 	return new Promise((resolve) => {
 		let stdout = "";
@@ -90,19 +108,21 @@ export function callCliAdvisor(
 		});
 
 		child.stdin?.on("error", () => {});
-		child.stdin?.end(promptText);
+		// stdin CLIs get the prompt on the pipe; arg CLIs already have it in argv,
+		// so just close their stdin so they don't block waiting on it.
+		child.stdin?.end(viaArg ? "" : promptText);
 	});
 }
 
 /**
  * Parse CLI stdout into advisor text. JSONL producers (codex, opencode) embed
- * the payload in JSON lines; claude emits plain text. Tolerant of junk.
+ * the payload in JSON lines; the rest emit plain text. Tolerant of junk.
  */
 export function parseCliOutput(stdout: string, command: string): string {
 	const trimmed = stdout.trim();
 	if (!trimmed) return "";
 
-	if (command === "codex" || command === "opencode") {
+	if (cliSpecOrGeneric(command).jsonl) {
 		const collected: string[] = [];
 		for (const line of trimmed.split("\n")) {
 			const l = line.trim();
