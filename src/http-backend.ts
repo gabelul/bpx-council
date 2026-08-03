@@ -10,7 +10,11 @@
  * follow the same pattern — add them when needed.
  */
 
+import { readImageBase64 } from "./attachments.js";
+
 export interface HttpBackendConfig {
+	/** Image paths, inlined as base64 content blocks (anthropic). */
+	images?: string[];
 	type: "http";
 	provider: "anthropic" | "openai" | "google";
 	model: string;
@@ -42,6 +46,22 @@ const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; apiKeyEnv: string; mo
  * Auth comes from the env var (ANTHROPIC_API_KEY etc.) — the same key the host
  * (Claude Code, Cursor, etc.) uses, so bpx-council runs as the same account.
  */
+/**
+ * Build Anthropic's message content: a plain string when there are no images,
+ * otherwise content blocks with each image inlined as base64.
+ *
+ * Images come first — the API wants them ahead of the text that refers to them,
+ * and it reads better to the model that way too.
+ */
+function anthropicContent(userMessage: string, images?: string[]): unknown {
+	if (!images || images.length === 0) return userMessage;
+	const blocks = images.map((path) => {
+		const { mime, data } = readImageBase64(path);
+		return { type: "image", source: { type: "base64", media_type: mime, data } };
+	});
+	return [...blocks, { type: "text", text: userMessage }];
+}
+
 export async function callHttpAdvisor(
 	systemPrompt: string,
 	userMessage: string,
@@ -75,7 +95,7 @@ export async function callHttpAdvisor(
 					model,
 					max_tokens: 4096,
 					system: systemPrompt,
-					messages: [{ role: "user", content: userMessage }],
+					messages: [{ role: "user", content: anthropicContent(userMessage, backend.images) }],
 				}),
 				signal: controller.signal,
 			});

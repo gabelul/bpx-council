@@ -15,6 +15,14 @@
  */
 
 /** Everything bpx-council needs to know to drive one advisor CLI. */
+/** What a single invocation needs to know. */
+export interface RunArgOpts {
+	model?: string;
+	effort?: string;
+	/** Image paths, for backends that attach them as arguments. */
+	images?: string[];
+}
+
 export interface CliBackendSpec {
 	/** Binary name — both how we spawn it and how we detect it on PATH. */
 	command: string;
@@ -34,7 +42,7 @@ export interface CliBackendSpec {
 	 * prompt (for `"arg"` delivery) is appended AFTER these — keep the flag that
 	 * swallows it at the end.
 	 */
-	runArgs(model?: string, effort?: string): string[];
+	runArgs(opts: RunArgOpts): string[];
 	/** stdout is JSONL wrapping the reply (codex/opencode). Plain text otherwise. */
 	jsonl?: boolean;
 	/** Whether pinning a model does anything — amp picks its own, so a pin is a no-op. */
@@ -52,6 +60,17 @@ export interface CliBackendSpec {
 	 * `ultra`, gpt-5.5 stops at `xhigh`).
 	 */
 	effort?: { levels: string[]; perModel?: boolean };
+	/**
+	 * How this backend takes images.
+	 *
+	 *  - `"attach"`  the CLI has an image flag; runArgs places the paths.
+	 *  - `"read"`    no flag, but the agent will open a path given in the prompt.
+	 *                Weaker: it depends on the tool's own file access, and if it
+	 *                declines you get a confident answer about an unseen image.
+	 *
+	 * Omitted means no image support — better a clear error than a silent drop.
+	 */
+	images?: "attach" | "read";
 }
 
 /** Pull the pickable slugs out of `codex debug models` JSON (drops hidden ones). */
@@ -81,6 +100,22 @@ export function parseCodexEfforts(body: unknown, model?: string): { levels: stri
 	return { levels, def: typeof target.default_reasoning_level === "string" ? target.default_reasoning_level : undefined };
 }
 
+/**
+ * Whether a codex model accepts image input, per its catalog.
+ *
+ * Returns null when the model isn't listed — unknown is not the same as "no",
+ * and refusing to run on a model we simply don't recognise would be worse than
+ * letting the attempt through.
+ */
+export function codexModelTakesImages(body: unknown, model?: string): boolean | null {
+	const models = (body as { models?: Array<Record<string, unknown>> })?.models ?? [];
+	const hit = model ? models.find((m) => m.slug === model) : undefined;
+	if (!hit) return null;
+	const modalities = hit.input_modalities;
+	if (!Array.isArray(modalities)) return null;
+	return modalities.includes("image");
+}
+
 /** One `provider/model` (or bare model) per line — opencode, crush, cursor-agent. */
 export function parseLineList(stdout: string): string[] {
 	return stdout
@@ -101,8 +136,11 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		prompt: "stdin",
 		jsonl: true,
 		// codex exec [--model M] --sandbox read-only --skip-git-repo-check -   (prompt on stdin)
-		runArgs: (m, e) => [
+		images: "attach",
+		runArgs: ({ model: m, effort: e, images = [] }) => [
 			"exec",
+			// -i is repeatable; codex attaches each to the initial prompt.
+			...images.flatMap((p) => ["-i", p]),
 			// -c is a config override, not a flag codex parses per-subcommand; unquoted
 			// is deliberate — it fails TOML parsing and codex keeps the raw string.
 			...(e ? ["-c", `model_reasoning_effort=${e}`] : []),
@@ -124,8 +162,12 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		label: "Claude CLI",
 		prompt: "stdin",
 		// claude [--model M] [--effort L] -p   (prompt on stdin). No model-list command.
-		runArgs: (m, e) => [...(m ? ["--model", m] : []), ...(e ? ["--effort", e] : []), "-p"],
+		runArgs: ({ model: m, effort: e }) => [...(m ? ["--model", m] : []), ...(e ? ["--effort", e] : []), "-p"],
 		effort: { levels: ["low", "medium", "high", "xhigh", "max"] },
+		// No image flag — claude opens a path mentioned in the prompt with its own
+		// Read tool. Verified working, but it's the agent fetching the file, not us
+		// handing it over.
+		images: "read",
 	},
 
 	// --- Wired per --help, round-trip UNVERIFIED (confirm before advertising) ---
@@ -135,7 +177,7 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		prompt: "stdin",
 		jsonl: true,
 		// opencode run [--model M]   (message on stdin).
-		runArgs: (m) => ["run", ...(m ? ["--model", m] : [])],
+		runArgs: ({ model: m }) => ["run", ...(m ? ["--model", m] : [])],
 		list: { args: ["models"], parse: parseLineList },
 	},
 	"cursor-agent": {
@@ -143,7 +185,7 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		label: "Cursor",
 		prompt: "arg",
 		// cursor-agent [--model M] --output-format text -p "<prompt>"   (-p is print mode; prompt positional).
-		runArgs: (m) => [...(m ? ["--model", m] : []), "--output-format", "text", "-p"],
+		runArgs: ({ model: m }) => [...(m ? ["--model", m] : []), "--output-format", "text", "-p"],
 		// `cursor-agent models` lists per account (empty when the account has none → free text).
 		list: { args: ["models"], parse: parseLineList },
 	},
@@ -152,21 +194,21 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		label: "Gemini CLI",
 		prompt: "arg",
 		// gemini [-m M] -p "<prompt>"   (-p takes the prompt as its value, so it goes last).
-		runArgs: (m) => [...(m ? ["-m", m] : []), "-p"],
+		runArgs: ({ model: m }) => [...(m ? ["-m", m] : []), "-p"],
 	},
 	qwen: {
 		command: "qwen",
 		label: "Qwen Code",
 		prompt: "arg",
 		// qwen [-m M] -p "<prompt>"   (gemini-cli fork, same shape).
-		runArgs: (m) => [...(m ? ["-m", m] : []), "-p"],
+		runArgs: ({ model: m }) => [...(m ? ["-m", m] : []), "-p"],
 	},
 	crush: {
 		command: "crush",
 		label: "Crush",
 		prompt: "arg",
 		// crush run [-m M] "<prompt>"   (prompt positional after run).
-		runArgs: (m) => ["run", ...(m ? ["-m", m] : [])],
+		runArgs: ({ model: m }) => ["run", ...(m ? ["-m", m] : [])],
 		// `crush models` → provider/model lines, same shape as opencode.
 		list: { args: ["models"], parse: parseLineList },
 	},
@@ -190,6 +232,17 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 /** The known CLI command names, in detection priority order (codex stays the default). */
 export const KNOWN_CLI_COMMANDS = Object.keys(CLI_BACKENDS);
 
+/**
+ * How a backend takes images, or undefined when it can't.
+ *
+ * anthropic isn't a CLI, but it does take images over HTTP as base64 blocks, so
+ * it answers here too — callers only care whether images are possible and how.
+ */
+export function imageSupport(name: string): "attach" | "read" | undefined {
+	if (name === "anthropic") return "attach";
+	return CLI_BACKENDS[name]?.images;
+}
+
 /** Registry entry for a known command, or `undefined` for a custom binary. */
 export function cliSpec(command: string): CliBackendSpec | undefined {
 	return CLI_BACKENDS[command];
@@ -206,7 +259,7 @@ export function cliSpecOrGeneric(command: string): CliBackendSpec {
 			command,
 			label: command,
 			prompt: "stdin",
-			runArgs: (m) => (m ? ["--model", m] : []),
+			runArgs: ({ model: m }) => (m ? ["--model", m] : []),
 		}
 	);
 }

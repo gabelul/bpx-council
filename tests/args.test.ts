@@ -227,3 +227,31 @@ describe("--effort", () => {
 		expect(parseArgs(["Ship it?"]).effort).toBeUndefined();
 	});
 });
+
+describe("--file and --image", () => {
+	it("collects repeated --file paths in order", () => {
+		const args = parseArgs(["--file", "a.ts", "--file", "b.ts", "Do these agree?"]);
+		expect(args.files).toEqual(["a.ts", "b.ts"]);
+		expect(args.question).toBe("Do these agree?");
+	});
+
+	it("collects repeated --image paths", () => {
+		expect(parseArgs(["--image", "one.png", "--image", "two.png", "Which?"]).images).toEqual(["one.png", "two.png"]);
+	});
+
+	it("accepts -f as the short form", () => {
+		expect(parseArgs(["-f", "a.ts", "Review"]).files).toEqual(["a.ts"]);
+	});
+
+	it("flags a missing value instead of eating the question", () => {
+		// `--file "Ship it?"` must not silently treat the question as a path.
+		expect(parseArgs(["--file"]).unknown.join(" ")).toContain("--file");
+		expect(parseArgs(["--image"]).unknown.join(" ")).toContain("--image");
+	});
+
+	it("defaults to empty lists", () => {
+		const args = parseArgs(["Ship it?"]);
+		expect(args.files).toEqual([]);
+		expect(args.images).toEqual([]);
+	});
+});
