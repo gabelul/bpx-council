@@ -50,6 +50,7 @@ import { basename, dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { AGENTS, findAgent, TEMPLATES_ROOT, type AgentDef, type InstallAction, type Scope } from "./agents.js";
 import { runMultiselect } from "./multiselect.js";
+import { printStarNudge } from "./nudge.js";
 import { bold, cyan, dim, green, red, yellow } from "./style.js";
 
 /** Markers that make the AGENTS.md block replaceable instead of duplicable. */
@@ -895,20 +896,6 @@ function previewTag(preview: ActionPreview): string {
 		default:
 			return dim("[current]");
 	}
-}
-
-/**
- * A quiet "a star helps" line after a successful interactive install.
- *
- * Only on a real terminal — a scripted install shouldn't get marketing in its
- * logs. One star, warm, not naggy; the whole tool is free.
- */
-function printStarNudge(): void {
-	if (!process.stdout.isTTY) return;
-	console.log();
-	console.log(`  ${yellow("★")} ${dim("If the council saved you a bad call, a star helps others find it:")}`);
-	console.log(`    ${cyan("https://github.com/gabelul/bpx-council")}`);
-	console.log(`    ${dim("gh repo star gabelul/bpx-council")}`);
 }
 
 interface WizardAnswers {
