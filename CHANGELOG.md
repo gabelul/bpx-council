@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/gabelul/bpx-council/compare/v1.7.0...v1.8.0) (2026-08-03)
+
+
+### Features
+
+* attach files and images to a consult ([e41dc8c](https://github.com/gabelul/bpx-council/commit/e41dc8cb7ae8855e93896fc173bf9030a06d75b0))
+
 ## [1.7.0](https://github.com/gabelul/bpx-council/compare/v1.6.1...v1.7.0) (2026-08-03)
 
 
