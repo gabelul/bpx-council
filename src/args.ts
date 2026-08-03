@@ -51,6 +51,10 @@ export interface CliArgs {
 	backend: string | undefined;
 	model: string | undefined;
 	effort: string | undefined;
+	/** Text files attached as context (repeatable --file). */
+	files: string[];
+	/** Image paths sent with the prompt (repeatable --image). */
+	images: string[];
 	rounds: number | undefined;
 	timeoutMs: number | undefined;
 	/**
@@ -76,6 +80,8 @@ export function parseArgs(argv: string[]): CliArgs {
 		backend: undefined,
 		model: undefined,
 		effort: undefined,
+		files: [],
+		images: [],
 		rounds: undefined,
 		timeoutMs: undefined,
 		backends: undefined,
@@ -114,6 +120,22 @@ export function parseArgs(argv: string[]): CliArgs {
 		else if (a === "--question" || a === "-q") args.question = argv[++i];
 		else if (a === "--model") args.model = argv[++i];
 		else if (a === "--effort") args.effort = takeValue(argv, i) ? argv[++i] : undefined;
+		// Repeatable: each --file/--image adds one path rather than replacing.
+		else if (a === "--file" || a === "-f") {
+			const v = takeValue(argv, i);
+			if (v === undefined) args.unknown.push(`${a} (missing value)`);
+			else {
+				i++;
+				args.files.push(v);
+			}
+		} else if (a === "--image") {
+			const v = takeValue(argv, i);
+			if (v === undefined) args.unknown.push("--image (missing value)");
+			else {
+				i++;
+				args.images.push(v);
+			}
+		}
 		else if (a === "--rounds") args.rounds = Number(argv[++i]) || undefined;
 		else if (a === "--timeout") args.timeoutMs = Number(argv[++i]) || undefined;
 		else if (a === "--backends") {

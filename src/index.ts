@@ -11,7 +11,10 @@
  */
 
 import { resolveConfig } from "./config.js";
+import { buildFileContext, readTextAttachments, validateImages } from "./attachments.js";
+import { imageSupport } from "./cli-registry.js";
 import { detectBackend, parseBackendArg, type ExplicitBackend } from "./detect.js";
+import { modelTakesImages } from "./models-list.js";
 import { runSolo } from "./solo.js";
 import { runCouncil } from "./council.js";
 import { runDebate } from "./debate.js";
@@ -44,6 +47,10 @@ Commands:
 Options:
   -m, --mode <mode>    solo (default) | council | debate | gut-check
   -q, --question <q>   The question (alternative to passing it positionally)
+  -f, --file <path>    Attach a text file as context (repeatable)
+      --image <path>   Attach an image (repeatable). codex and anthropic take
+                       them directly; claude opens the path itself. Other
+                       backends have no image input and will refuse.
   -c, --config <path>  Path to config file (default: ~/.bpx-council.json)
   -b, --backend <name> Force a backend: codex, claude, opencode (CLI) or
                       anthropic, openai, google (HTTP via API key in env)
@@ -242,6 +249,18 @@ async function main(): Promise<void> {
 		process.exit(1);
 	}
 
+	// Attachments — files become context, images ride on the backend. Both are
+	// validated before any model call, so a typo'd path fails in milliseconds
+	// rather than after a two-minute council run.
+	let fileContext = "";
+	try {
+		fileContext = buildFileContext(readTextAttachments(args.files));
+		validateImages(args.images);
+	} catch (e) {
+		console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
+		process.exit(1);
+	}
+
 	// Read piped stdin as context.
 	let stdinContext = "";
 	if (!process.stdin.isTTY) {
@@ -287,7 +306,31 @@ async function main(): Promise<void> {
 		(config.solo.backend as { timeoutMs?: number }).timeoutMs = args.timeoutMs;
 	}
 
-	const commonArgs = { question: args.question, context: stdinContext || undefined, config };
+	// Images need a backend that actually takes them. Refuse loudly rather than
+	// dropping them — a confident answer about an image the model never saw is
+	// the worst possible outcome here.
+	if (args.images.length > 0) {
+		const backend = config.solo.backend as { type?: string; command?: string; provider?: string; model?: string } | undefined;
+		const command = backend?.type === "http" ? backend.provider : backend?.command;
+		const support = command ? imageSupport(command) : undefined;
+		if (!support) {
+			console.error(`Error: ${command ?? "this backend"} can't take images. Try: codex, claude, or anthropic.`);
+			process.exit(1);
+		}
+		// codex publishes image support per model; warn if the pinned one is text-only.
+		if (modelTakesImages(command as string, backend?.model) === false) {
+			console.error(`Warning: ${backend?.model} takes text only — the image may be ignored. Pick a model with image input.`);
+		}
+		if (support === "attach") {
+			(config.solo.backend as { images?: string[] }).images = args.images;
+		} else {
+			// claude has no image flag; it opens paths named in the prompt itself.
+			fileContext = `${fileContext ? `${fileContext}\n\n` : ""}Images to look at: ${args.images.join(", ")}`;
+		}
+	}
+
+	const context = [fileContext, stdinContext].filter(Boolean).join("\n\n");
+	const commonArgs = { question: args.question, context: context || undefined, config };
 
 	// `partial` is debate-only: rounds that completed before a later call failed.
 	let result: { ok: true; text: string } | { ok: false; error: string; partial?: string };

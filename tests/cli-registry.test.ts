@@ -15,8 +15,8 @@ describe("runArgs — per-tool invocation", () => {
 	it("codex: model after exec, prompt on stdin", () => {
 		const s = CLI_BACKENDS.codex;
 		expect(s.prompt).toBe("stdin");
-		expect(s.runArgs()).toEqual(["exec", "--sandbox", "read-only", "--skip-git-repo-check", "-"]);
-		expect(s.runArgs("gpt-5-codex")).toEqual([
+		expect(s.runArgs({})).toEqual(["exec", "--sandbox", "read-only", "--skip-git-repo-check", "-"]);
+		expect(s.runArgs({ model: "gpt-5-codex" })).toEqual([
 			"exec",
 			"--model",
 			"gpt-5-codex",
@@ -29,11 +29,11 @@ describe("runArgs — per-tool invocation", () => {
 
 	it("claude: model before -p, prompt on stdin", () => {
 		expect(CLI_BACKENDS.claude.prompt).toBe("stdin");
-		expect(CLI_BACKENDS.claude.runArgs("claude-opus-4-8")).toEqual(["--model", "claude-opus-4-8", "-p"]);
+		expect(CLI_BACKENDS.claude.runArgs({ model: "claude-opus-4-8" })).toEqual(["--model", "claude-opus-4-8", "-p"]);
 	});
 
 	it("opencode: model after run, prompt on stdin", () => {
-		expect(CLI_BACKENDS.opencode.runArgs("anthropic/claude-opus-4-8")).toEqual([
+		expect(CLI_BACKENDS.opencode.runArgs({ model: "anthropic/claude-opus-4-8" })).toEqual([
 			"run",
 			"--model",
 			"anthropic/claude-opus-4-8",
@@ -43,27 +43,27 @@ describe("runArgs — per-tool invocation", () => {
 	it("cursor-agent: text output, -p last so the appended prompt is positional", () => {
 		const s = CLI_BACKENDS["cursor-agent"];
 		expect(s.prompt).toBe("arg");
-		expect(s.runArgs("gpt-5")).toEqual(["--model", "gpt-5", "--output-format", "text", "-p"]);
-		expect(s.runArgs().at(-1)).toBe("-p"); // prompt is appended after this
+		expect(s.runArgs({ model: "gpt-5" })).toEqual(["--model", "gpt-5", "--output-format", "text", "-p"]);
+		expect(s.runArgs({}).at(-1)).toBe("-p"); // prompt is appended after this
 	});
 
 	it("gemini/qwen: -m up front, -p last to swallow the appended prompt", () => {
 		for (const cmd of ["gemini", "qwen"] as const) {
 			const s = CLI_BACKENDS[cmd];
 			expect(s.prompt).toBe("arg");
-			expect(s.runArgs("some-model")).toEqual(["-m", "some-model", "-p"]);
-			expect(s.runArgs().at(-1)).toBe("-p");
+			expect(s.runArgs({ model: "some-model" })).toEqual(["-m", "some-model", "-p"]);
+			expect(s.runArgs({}).at(-1)).toBe("-p");
 		}
 	});
 
 	it("crush: model after run, prompt positional", () => {
-		expect(CLI_BACKENDS.crush.runArgs("zai/glm-5")).toEqual(["run", "-m", "zai/glm-5"]);
+		expect(CLI_BACKENDS.crush.runArgs({ model: "zai/glm-5" })).toEqual(["run", "-m", "zai/glm-5"]);
 	});
 
 	it("amp: no model flag — a pinned model is a no-op", () => {
 		const s = CLI_BACKENDS.amp;
 		expect(s.ignoresModel).toBe(true);
-		expect(s.runArgs("anything")).toEqual(["-x"]); // model ignored on purpose
+		expect(s.runArgs({ model: "anything" })).toEqual(["-x"]); // model ignored on purpose
 	});
 });
 
@@ -91,8 +91,8 @@ describe("cliSpecOrGeneric — custom binaries still work", () => {
 		const s = cliSpecOrGeneric("my-advisor");
 		expect(s.prompt).toBe("stdin");
 		expect(s.jsonl).toBeUndefined();
-		expect(s.runArgs()).toEqual([]);
-		expect(s.runArgs("v2")).toEqual(["--model", "v2"]);
+		expect(s.runArgs({})).toEqual([]);
+		expect(s.runArgs({ model: "v2" })).toEqual(["--model", "v2"]);
 	});
 });
 

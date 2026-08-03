@@ -12,11 +12,11 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cliSpec, parseCodexEfforts, parseCodexModels, parseLineList } from "./cli-registry.js";
+import { cliSpec, codexModelTakesImages, parseCodexEfforts, parseCodexModels, parseLineList } from "./cli-registry.js";
 
 // Re-exported for tests and callers that want the pure parsers without the
 // registry indirection.
-export { parseCodexEfforts, parseCodexModels, parseLineList };
+export { codexModelTakesImages, parseCodexEfforts, parseCodexModels, parseLineList };
 /** @deprecated name kept for existing imports — opencode/crush/cursor share this. */
 export const parseOpencodeModels = parseLineList;
 
@@ -41,6 +41,25 @@ export async function listEfforts(name: string, model?: string): Promise<{ level
 		}
 	}
 	return { levels: spec.effort.levels };
+}
+
+/**
+ * Does this backend/model combination accept images? null when we can't tell.
+ *
+ * Only codex publishes this per model, so everything else answers null and the
+ * caller falls back to the registry's coarser "does this backend do images at
+ * all" flag.
+ */
+export function modelTakesImages(name: string, model?: string): boolean | null {
+	if (name !== "codex" || !model) return null;
+	const spec = cliSpec(name);
+	if (!spec?.list) return null;
+	try {
+		const out = execFileSync(spec.command, spec.list.args, { encoding: "utf-8", timeout: 15_000 });
+		return codexModelTakesImages(JSON.parse(out), model);
+	} catch {
+		return null;
+	}
 }
 
 /** Can this backend enumerate its models? If not, the wizard asks for free text. */
