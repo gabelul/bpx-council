@@ -31,6 +31,7 @@ export interface InstallArgs {
 export interface ConfigureArgs {
 	backend: string | undefined;
 	model: string | undefined;
+	effort: string | undefined;
 	mode: Mode | undefined;
 	/** Which config file to write: project `.bpx-council.json` or global. */
 	scope: "project" | "global" | undefined;
@@ -49,6 +50,7 @@ export interface CliArgs {
 	configPath: string | undefined;
 	backend: string | undefined;
 	model: string | undefined;
+	effort: string | undefined;
 	rounds: number | undefined;
 	timeoutMs: number | undefined;
 	/**
@@ -67,12 +69,13 @@ export function parseArgs(argv: string[]): CliArgs {
 	const args: CliArgs = {
 		command: "consult",
 		install: { agents: [], scope: undefined, withHook: false, yes: false, dryRun: false, link: false },
-		configure: { backend: undefined, model: undefined, mode: undefined, scope: undefined, yes: false, dryRun: false },
+		configure: { backend: undefined, model: undefined, effort: undefined, mode: undefined, scope: undefined, yes: false, dryRun: false },
 		question: undefined,
 		mode: "solo",
 		configPath: undefined,
 		backend: undefined,
 		model: undefined,
+		effort: undefined,
 		rounds: undefined,
 		timeoutMs: undefined,
 		backends: undefined,
@@ -110,6 +113,7 @@ export function parseArgs(argv: string[]): CliArgs {
 		else if (a === "--backend" || a === "-b") args.backend = argv[++i];
 		else if (a === "--question" || a === "-q") args.question = argv[++i];
 		else if (a === "--model") args.model = argv[++i];
+		else if (a === "--effort") args.effort = takeValue(argv, i) ? argv[++i] : undefined;
 		else if (a === "--rounds") args.rounds = Number(argv[++i]) || undefined;
 		else if (a === "--timeout") args.timeoutMs = Number(argv[++i]) || undefined;
 		else if (a === "--backends") {
@@ -215,6 +219,13 @@ function parseConfigureArgs(argv: string[], args: CliArgs): CliArgs {
 			else {
 				i++;
 				args.configure.model = value;
+			}
+		} else if (a === "--effort") {
+			const value = takeValue(argv, i);
+			if (value === undefined) args.unknown.push("--effort (missing value)");
+			else {
+				i++;
+				args.configure.effort = value;
 			}
 		} else if (a === "--mode" || a === "-m") {
 			const value = takeValue(argv, i);

@@ -25,6 +25,7 @@ export interface ExplicitBackend {
 	provider?: string;
 	command?: string;
 	model?: string;
+	effort?: string;
 }
 
 /**
@@ -64,17 +65,23 @@ export function parseBackendArg(arg: string): ExplicitBackend {
 	// A `name:model` spec pins a model to this backend, e.g. `codex:gpt-5-codex`
 	// or `anthropic:claude-opus-4-8`. Split on the FIRST colon only — model IDs
 	// don't contain one, but this stays safe if a future one does.
-	const colon = arg.indexOf(":");
-	const name = colon === -1 ? arg : arg.slice(0, colon);
-	const model = colon === -1 ? undefined : arg.slice(colon + 1) || undefined;
+	// An `@level` suffix pins reasoning effort: `codex:gpt-5.6-sol@max`. Split it
+	// off first, from the LAST `@`, so a model id containing one survives.
+	const at = arg.lastIndexOf("@");
+	const effort = at > 0 ? arg.slice(at + 1) || undefined : undefined;
+	const rest = at > 0 ? arg.slice(0, at) : arg;
+
+	const colon = rest.indexOf(":");
+	const name = colon === -1 ? rest : rest.slice(0, colon);
+	const model = colon === -1 ? undefined : rest.slice(colon + 1) || undefined;
 
 	const http = ["anthropic", "openai", "google"];
 	const tmux = ["tmux", "pty", "interactive"];
-	if (KNOWN_CLI_COMMANDS.includes(name)) return { type: "cli", command: name, model };
-	if (http.includes(name)) return { type: "http", provider: name, model };
-	if (tmux.includes(name)) return { type: "tmux", command: "codex", model };
+	if (KNOWN_CLI_COMMANDS.includes(name)) return { type: "cli", command: name, model, effort };
+	if (http.includes(name)) return { type: "http", provider: name, model, effort };
+	if (tmux.includes(name)) return { type: "tmux", command: "codex", model, effort };
 	// Unknown — treat as a CLI command name.
-	return { type: "cli", command: name, model };
+	return { type: "cli", command: name, model, effort };
 }
 
 /**
@@ -89,7 +96,9 @@ export function backendLabel(backend: DetectedBackend): string {
 	// reads "codex:gpt-5-codex" rather than a bare "codex".
 	const command = (backend as { command?: string }).command ?? backend.type;
 	const model = (backend as { model?: string }).model;
-	return model ? `${command}:${model}` : command;
+	const effort = (backend as { effort?: string }).effort;
+	const base = model ? `${command}:${model}` : command;
+	return effort ? `${base}@${effort}` : base;
 }
 
 function resolveExplicit(explicit: ExplicitBackend): DetectedBackend {
@@ -97,7 +106,7 @@ function resolveExplicit(explicit: ExplicitBackend): DetectedBackend {
 		// Carry the pinned model through — callCliAdvisor injects it as the CLI's
 		// own --model flag. Without a model the CLI uses whatever it's configured
 		// for, which is the sensible default (and stays current on its own).
-		return { type: "cli", command: explicit.command ?? "codex", model: explicit.model, timeoutMs: 120_000 };
+		return { type: "cli", command: explicit.command ?? "codex", model: explicit.model, effort: explicit.effort, timeoutMs: 120_000 };
 	}
 	if (explicit.type === "tmux") {
 		return { type: "tmux", command: explicit.command ?? "codex", model: explicit.model, timeoutMs: 120_000 };

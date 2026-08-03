@@ -34,13 +34,24 @@ export interface CliBackendSpec {
 	 * prompt (for `"arg"` delivery) is appended AFTER these — keep the flag that
 	 * swallows it at the end.
 	 */
-	runArgs(model?: string): string[];
+	runArgs(model?: string, effort?: string): string[];
 	/** stdout is JSONL wrapping the reply (codex/opencode). Plain text otherwise. */
 	jsonl?: boolean;
 	/** Whether pinning a model does anything — amp picks its own, so a pin is a no-op. */
 	ignoresModel?: boolean;
 	/** How to enumerate models, when the CLI can. Omit → the wizard asks for free text. */
 	list?: { args: string[]; parse(stdout: string): string[] };
+	/**
+	 * How this CLI takes a reasoning-effort level, and which levels it accepts.
+	 *
+	 * Omit when the tool has no such control — the effort is then simply not
+	 * passed, rather than guessed at with a flag the CLI would reject.
+	 *
+	 * `levels` is the static fallback list; codex overrides it per model, since
+	 * its catalog reports what each one actually supports (gpt-5.6-sol goes to
+	 * `ultra`, gpt-5.5 stops at `xhigh`).
+	 */
+	effort?: { levels: string[]; perModel?: boolean };
 }
 
 /** Pull the pickable slugs out of `codex debug models` JSON (drops hidden ones). */
@@ -50,6 +61,24 @@ export function parseCodexModels(body: unknown): string[] {
 		.filter((m) => m.visibility === "list")
 		.map((m) => m.slug)
 		.filter((slug): slug is string => typeof slug === "string");
+}
+
+/**
+ * Reasoning levels codex reports for one model, plus its default.
+ *
+ * The catalog is per model — gpt-5.6-sol accepts `ultra`, gpt-5.5 stops at
+ * `xhigh` — so offering a fixed list would let you pick something the model
+ * rejects. Returns null when the model isn't in the catalog.
+ */
+export function parseCodexEfforts(body: unknown, model?: string): { levels: string[]; def?: string } | null {
+	const models = (body as { models?: Array<Record<string, unknown>> })?.models ?? [];
+	const hit = model ? models.find((m) => m.slug === model) : undefined;
+	const target = hit ?? (model ? undefined : models.find((m) => m.visibility === "list"));
+	if (!target) return null;
+	const raw = (target.supported_reasoning_levels as Array<{ effort?: unknown }> | undefined) ?? [];
+	const levels = raw.map((l) => l.effort).filter((e): e is string => typeof e === "string");
+	if (levels.length === 0) return null;
+	return { levels, def: typeof target.default_reasoning_level === "string" ? target.default_reasoning_level : undefined };
 }
 
 /** One `provider/model` (or bare model) per line — opencode, crush, cursor-agent. */
@@ -72,16 +101,31 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		prompt: "stdin",
 		jsonl: true,
 		// codex exec [--model M] --sandbox read-only --skip-git-repo-check -   (prompt on stdin)
-		runArgs: (m) => ["exec", ...(m ? ["--model", m] : []), "--sandbox", "read-only", "--skip-git-repo-check", "-"],
+		runArgs: (m, e) => [
+			"exec",
+			// -c is a config override, not a flag codex parses per-subcommand; unquoted
+			// is deliberate — it fails TOML parsing and codex keeps the raw string.
+			...(e ? ["-c", `model_reasoning_effort=${e}`] : []),
+			...(m ? ["--model", m] : []),
+			"--sandbox",
+			"read-only",
+			"--skip-git-repo-check",
+			"-",
+		],
 		// codex enumerates itself, resolving its own provider/auth — no config parsing on our side.
 		list: { args: ["debug", "models"], parse: (s) => parseCodexModels(JSON.parse(s)) },
+		// codex has no --effort flag; effort is a config override. Unquoted is fine —
+		// it fails TOML parsing and codex falls back to the raw string, which is what
+		// we want. Verified against a live `codex exec` call.
+		effort: { levels: ["low", "medium", "high", "xhigh"], perModel: true },
 	},
 	claude: {
 		command: "claude",
 		label: "Claude CLI",
 		prompt: "stdin",
-		// claude [--model M] -p   (prompt on stdin). No model-list command.
-		runArgs: (m) => [...(m ? ["--model", m] : []), "-p"],
+		// claude [--model M] [--effort L] -p   (prompt on stdin). No model-list command.
+		runArgs: (m, e) => [...(m ? ["--model", m] : []), ...(e ? ["--effort", e] : []), "-p"],
+		effort: { levels: ["low", "medium", "high", "xhigh", "max"] },
 	},
 
 	// --- Wired per --help, round-trip UNVERIFIED (confirm before advertising) ---

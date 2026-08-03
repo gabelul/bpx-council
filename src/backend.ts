@@ -32,6 +32,12 @@ export interface CliBackendConfig {
 	 * default. Ignored when `args` is set — then you're supplying the full args.
 	 */
 	model?: string;
+	/**
+	 * Reasoning effort, for CLIs that expose one (codex, claude). Passed as that
+	 * tool's own flag; silently ignored by backends with no such control, rather
+	 * than guessed at with a flag they'd reject.
+	 */
+	effort?: string;
 }
 
 export interface BackendResult {
@@ -48,8 +54,8 @@ export interface BackendResult {
  * subcommand, claude/gemini up front). When no model is set, the CLI uses its
  * own configured default.
  */
-export function cliArgsFor(command: string, model?: string): string[] {
-	return cliSpecOrGeneric(command).runArgs(model);
+export function cliArgsFor(command: string, model?: string, effort?: string): string[] {
+	return cliSpecOrGeneric(command).runArgs(model, effort);
 }
 
 /**
@@ -66,7 +72,7 @@ export function callCliAdvisor(
 	const spec = cliSpecOrGeneric(command);
 	// Explicit args win outright; otherwise build from the registry, injecting the
 	// pinned model as the CLI's own flag.
-	const baseArgs = backend.args?.length ? backend.args : spec.runArgs(backend.model);
+	const baseArgs = backend.args?.length ? backend.args : spec.runArgs(backend.model, backend.effort);
 	const timeoutMs = backend.timeoutMs ?? 120_000;
 	const promptText = `${systemPrompt}\n\n---\n\n=== User ===\n${userMessage}\n`;
 	// stdin CLIs read the prompt off the pipe; arg CLIs want it as the last argv

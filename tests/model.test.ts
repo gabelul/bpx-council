@@ -84,3 +84,42 @@ describe("backendLabel", () => {
 		expect(backendLabel({ type: "cli", command: "codex" })).toBe("codex");
 	});
 });
+
+describe("reasoning effort", () => {
+	it("parses a backend:model@effort spec", () => {
+		expect(parseBackendArg("codex:gpt-5.6-sol@max")).toEqual({
+			type: "cli",
+			command: "codex",
+			model: "gpt-5.6-sol",
+			effort: "max",
+		});
+	});
+
+	it("parses effort without a model", () => {
+		expect(parseBackendArg("claude@high")).toMatchObject({ command: "claude", model: undefined, effort: "high" });
+	});
+
+	it("splits effort from the last @, so a model id containing one survives", () => {
+		expect(parseBackendArg("codex:some@model@low")).toMatchObject({ model: "some@model", effort: "low" });
+	});
+
+	it("injects codex's effort as a config override after exec", () => {
+		const args = cliArgsFor("codex", "gpt-5.6-sol", "xhigh");
+		expect(args.slice(0, 4)).toEqual(["exec", "-c", "model_reasoning_effort=xhigh", "--model"]);
+	});
+
+	it("injects claude's effort as its own flag", () => {
+		expect(cliArgsFor("claude", undefined, "max")).toEqual(["--effort", "max", "-p"]);
+	});
+
+	it("ignores effort for backends with no such control", () => {
+		// gemini has no reasoning flag — passing one must not invent an argument.
+		expect(cliArgsFor("gemini", undefined, "high")).toEqual(["-p"]);
+	});
+
+	it("shows the effort in the council label", () => {
+		expect(backendLabel({ type: "cli", command: "codex", model: "gpt-5.6-sol", effort: "max" })).toBe(
+			"codex:gpt-5.6-sol@max",
+		);
+	});
+});

@@ -18,8 +18,14 @@ export interface BackendConfig {
 	timeoutMs?: number;
 	/** HTTP only: the provider name. */
 	provider?: "anthropic" | "openai" | "google";
-	/** HTTP only: the model ID. */
+	/** The model ID — pinned for CLI backends too, not just HTTP. */
 	model?: string;
+	/**
+	 * Reasoning effort, for backends that expose one (codex, claude). Ignored by
+	 * the rest. Which levels are valid depends on the backend and, for codex, the
+	 * model — the wizard queries them rather than offering a fixed list.
+	 */
+	effort?: string;
 	/** HTTP only: env var name holding the API key. */
 	apiKeyEnv?: string;
 	/** HTTP only: the API base URL. */
@@ -28,7 +34,14 @@ export interface BackendConfig {
 
 export interface AdvisorConfig {
 	model: string;
-	thinkingLevel?: "minimal" | "low" | "medium" | "high" | "xhigh";
+	/**
+	 * Fallback reasoning effort when a backend doesn't pin its own with `@level`.
+	 *
+	 * Applies only to backends that expose such a control (codex, claude); the
+	 * rest ignore it. Values are the union across those tools — which levels are
+	 * actually valid depends on the backend and, for codex, the model.
+	 */
+	thinkingLevel?: "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 	backend?: BackendConfig;
 }
 
@@ -55,7 +68,8 @@ export const DEFAULT_CONFIG: BpxCouncilConfig = {
 	defaultMode: "solo",
 	solo: {
 		model: "auto",
-		thinkingLevel: "medium",
+		// No default effort: each CLI already has its own, and forcing "medium"
+		// here would quietly override whatever the user configured in codex.
 		// No hardcoded backend — auto-detect at runtime (env vars > CLIs on PATH).
 		// See src/detect.ts. Override via ~/.bpx-council.json or --backend.
 	},

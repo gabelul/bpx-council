@@ -18,6 +18,7 @@ function scriptedPickers(opts: {
 	asks?: string[];
 	confirms?: boolean[];
 	models?: string[];
+	efforts?: { levels: string[]; def?: string } | null;
 }): Pickers {
 	let s = 0;
 	let f = 0;
@@ -33,6 +34,8 @@ function scriptedPickers(opts: {
 		},
 		confirm: async () => opts.confirms?.[c++] ?? false,
 		listModels: async () => opts.models ?? [],
+		// Default: the backend has no effort control, so the step is skipped.
+		listEfforts: async () => opts.efforts ?? null,
 	};
 }
 
@@ -68,6 +71,15 @@ describe("backendConfigFromSpec", () => {
 			type: "http",
 			provider: "anthropic",
 			model: "claude-opus-4-8",
+		});
+	});
+
+	it("carries a pinned reasoning effort onto the backend", () => {
+		expect(backendConfigFromSpec("codex:gpt-5.6-sol@max")).toEqual({
+			type: "cli",
+			command: "codex",
+			model: "gpt-5.6-sol",
+			effort: "max",
 		});
 	});
 
@@ -171,6 +183,32 @@ describe("gatherAnswers (scripted pickers)", () => {
 			critic: "claude",
 			simplifier: "codex:gpt-5-codex",
 		});
+	});
+
+	it("appends the chosen reasoning effort to the spec", async () => {
+		const answers = await gatherAnswers(
+			// selects: backend, effort, mode
+			scriptedPickers({
+				selects: ["codex", "xhigh", "solo"],
+				asks: ["gpt-5.6-sol"],
+				models: [],
+				efforts: { levels: ["low", "medium", "high", "xhigh"], def: "medium" },
+			}),
+			CODEX,
+			undefined,
+		);
+		expect(answers.soloSpec).toBe("codex:gpt-5.6-sol@xhigh");
+	});
+
+	it("skips the effort step for a backend with no such control", async () => {
+		const answers = await gatherAnswers(
+			scriptedPickers({ selects: ["codex", "council"], asks: ["gpt-5-codex"], models: [], efforts: null }),
+			CODEX,
+			undefined,
+		);
+		// No @level, and the second select fell through to the mode question.
+		expect(answers.soloSpec).toBe("codex:gpt-5-codex");
+		expect(answers.mode).toBe("council");
 	});
 
 	it("falls back to solo when the mode select is cancelled", async () => {
