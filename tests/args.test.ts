@@ -206,3 +206,24 @@ describe("parseArgs — config / setup subcommands", () => {
 		expect(parseArgs(["config", "--config", "/tmp/x.json"]).configPath).toBe("/tmp/x.json");
 	});
 });
+
+describe("--effort", () => {
+	it("parses on a consult run", () => {
+		expect(parseArgs(["--effort", "max", "Ship it?"]).effort).toBe("max");
+	});
+
+	it("parses on the config subcommand", () => {
+		const args = parseArgs(["config", "--backend", "codex", "--effort", "xhigh", "--yes"]);
+		expect(args.configure.effort).toBe("xhigh");
+	});
+
+	it("flags a missing value instead of swallowing the next token", () => {
+		// `--effort "Ship it?"` must not eat the question, the same trap --model had.
+		const args = parseArgs(["config", "--effort", "--yes"]);
+		expect(args.unknown.join(" ")).toContain("--effort");
+	});
+
+	it("defaults to undefined so the backend keeps its own setting", () => {
+		expect(parseArgs(["Ship it?"]).effort).toBeUndefined();
+	});
+});

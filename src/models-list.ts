@@ -12,13 +12,36 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { cliSpec, parseCodexModels, parseLineList } from "./cli-registry.js";
+import { cliSpec, parseCodexEfforts, parseCodexModels, parseLineList } from "./cli-registry.js";
 
 // Re-exported for tests and callers that want the pure parsers without the
 // registry indirection.
-export { parseCodexModels, parseLineList };
+export { parseCodexEfforts, parseCodexModels, parseLineList };
 /** @deprecated name kept for existing imports — opencode/crush/cursor share this. */
 export const parseOpencodeModels = parseLineList;
+
+/**
+ * The reasoning levels a backend accepts, and its default — or null when it has
+ * no effort control at all.
+ *
+ * codex is asked about the specific model, since its catalog reports levels per
+ * model; everything else uses the registry's static list. Any failure falls back
+ * to the static list rather than blocking the wizard.
+ */
+export async function listEfforts(name: string, model?: string): Promise<{ levels: string[]; def?: string } | null> {
+	const spec = cliSpec(name);
+	if (!spec?.effort) return null;
+	if (spec.effort.perModel && spec.list) {
+		try {
+			const out = execFileSync(spec.command, spec.list.args, { encoding: "utf-8", timeout: 15_000 });
+			const found = parseCodexEfforts(JSON.parse(out), model);
+			if (found) return found;
+		} catch {
+			// Fall through to the static list.
+		}
+	}
+	return { levels: spec.effort.levels };
+}
 
 /** Can this backend enumerate its models? If not, the wizard asks for free text. */
 export function backendListsModels(name: string): boolean {

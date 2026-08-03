@@ -14,7 +14,7 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import { MODES, type Mode } from "./args.js";
 import { type BackendConfig, type BpxCouncilConfig, configPath, projectConfigWritePath } from "./config.js";
 import { availableBackends, parseBackendArg, type AvailableBackend } from "./detect.js";
-import { listModels } from "./models-list.js";
+import { listEfforts, listModels } from "./models-list.js";
 import { printStarNudge } from "./nudge.js";
 import { BAR, railIntro, railNote, railOutro, railStep } from "./rail.js";
 import { runConfirm, runFilterSelect, runInput, runSelect, type SelectOption } from "./select.js";
@@ -29,6 +29,8 @@ export interface ConfigOptions {
 	backend?: string;
 	/** Advisor model to pin (headless). */
 	model?: string;
+	/** Reasoning effort to pin (headless). */
+	effort?: string;
 	/** Default mode (headless). */
 	mode?: Mode;
 	/** Which file to write: project `.bpx-council.json` or the global one. */
@@ -71,11 +73,13 @@ export function backendConfigFromSpec(spec: string): BackendConfig {
 	if (parsed.type === "http") {
 		const backend: BackendConfig = { type: "http", provider: parsed.provider as BackendConfig["provider"] };
 		if (parsed.model) backend.model = parsed.model;
+		if (parsed.effort) backend.effort = parsed.effort;
 		return backend;
 	}
 	// cli (and anything unknown falls here — a custom advisor command)
 	const backend: BackendConfig = { type: "cli", command: parsed.command ?? "codex" };
 	if (parsed.model) backend.model = parsed.model;
+	if (parsed.effort) backend.effort = parsed.effort;
 	return backend;
 }
 
@@ -150,7 +154,8 @@ function printPlan(path: string, config: BpxCouncilConfig, rail = false): void {
 	const b = config.solo.backend;
 	const model = b?.model ? `  ${themeValue(b.model)}` : dim("  (its own default)");
 	const kind = b?.type === "http" || b?.type === "cli" ? ` ${kindBadge(b.type)}` : "";
-	const label = b?.type === "http" ? `${b.provider}${kind}${model}` : `${b?.command ?? "auto-detect"}${kind}${model}`;
+	const effort = b?.effort ? `  ${dim("effort")} ${themeValue(b.effort)}` : "";
+	const label = `${b?.type === "http" ? b.provider : (b?.command ?? "auto-detect")}${kind}${model}${effort}`;
 
 	const rows = [
 		`${themeLabel("mode")}     ${modeTone(config.defaultMode)(config.defaultMode)}  ${dim(MODE_HINTS[config.defaultMode] ?? "")}`,
@@ -243,6 +248,8 @@ export interface Pickers {
 	confirm(question: string, defaultYes: boolean): Promise<boolean>;
 	/** A backend's models, or [] when it can't enumerate them. */
 	listModels(backend: string): Promise<string[]>;
+	/** A backend's reasoning levels for a model, or null when it has no such control. */
+	listEfforts(backend: string, model?: string): Promise<{ levels: string[]; def?: string } | null>;
 }
 
 /**
@@ -267,6 +274,7 @@ export async function gatherAnswers(
 
 	// Model — a filterable list where the backend supports it, else free text.
 	let soloSpec = backendName;
+	let chosenModel: string | undefined;
 	const models = await pickers.listModels(backendName);
 	if (models.length > 0) {
 		const picked = await pickers.filterSelect(
@@ -274,11 +282,31 @@ export async function gatherAnswers(
 			models,
 		);
 		if (picked) soloSpec = `${backendName}:${picked}`;
+		chosenModel = picked ?? undefined;
 		chrome.answered("Model", picked ?? `${backendName} default`);
 	} else {
 		const model = await pickers.ask(chrome.ask(2, "Pin a model? (blank = the backend's own default)"), "");
 		if (model) soloSpec = `${backendName}:${model}`;
+		chosenModel = model || undefined;
 		chrome.answered("Model", model || `${backendName} default`);
+	}
+
+	// Reasoning effort — only for backends that have such a control, and only
+	// offering the levels this model actually accepts. Unnumbered like the council
+	// question: it's conditional, and escape keeps the tool's own default.
+	const efforts = await pickers.listEfforts(backendName, chosenModel);
+	if (efforts && efforts.levels.length > 0) {
+		const options = efforts.levels.map((l) => ({
+			label: l,
+			value: l,
+			hint: l === efforts.def ? "this model's default" : undefined,
+		}));
+		const initial = Math.max(0, efforts.levels.indexOf(efforts.def ?? ""));
+		const picked = await pickers.select(chrome.ask(0, "Reasoning effort? (esc keeps the default)"), options, initial);
+		if (picked) {
+			soloSpec = `${soloSpec}@${picked}`;
+			chrome.answered("Reasoning effort", picked);
+		}
 	}
 
 	// Mode — arrow-key select.
@@ -319,6 +347,7 @@ const productionPickers: Pickers = {
 	ask: (question, def) => runInput(question, def, { rail: true }),
 	confirm: (question, defaultYes) => runConfirm(question, defaultYes, { rail: true }),
 	listModels,
+	listEfforts,
 };
 
 /** Show the plan, then write (with an optional confirm). Shared by both paths. */
@@ -440,7 +469,7 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 	const config = buildConfig(
 		{
 			mode: opts.mode ?? existing?.defaultMode ?? "solo",
-			soloSpec: opts.model ? `${backendName}:${opts.model}` : backendName,
+			soloSpec: `${backendName}${opts.model ? `:${opts.model}` : ""}${opts.effort ? `@${opts.effort}` : ""}`,
 			council: existing?.council?.backends, // headless keeps any existing council
 		},
 		existing,

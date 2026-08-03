@@ -48,6 +48,9 @@ Options:
   -b, --backend <name> Force a backend: codex, claude, opencode (CLI) or
                       anthropic, openai, google (HTTP via API key in env)
       --model <id>     Override the model (e.g. claude-opus-4-20250514).
+      --effort <level> Reasoning effort for backends that have one (codex,
+                       claude): low, medium, high, xhigh, max. Ignored by the
+                       rest. Per backend: --backends codex:gpt-5.6-sol@max
                       Also reads BPX_COUNCIL_MODEL / ANTHROPIC_MODEL env vars.
       --rounds <n>     Debate rounds, 1-4 (default: 2). Each round is an
                       advocate turn plus a critic turn.
@@ -96,6 +99,7 @@ Usage:
 Options:
   -b, --backend <name>  Advisor backend: codex | claude | opencode | anthropic
       --model <id>      Pin the advisor's model (blank = the backend's default)
+      --effort <level>  Pin the reasoning effort (codex, claude)
   -m, --mode <mode>     solo (default) | council | debate | gut-check
       --scope <s>       global (default, ~/.bpx-council.json) | project
                        (.bpx-council.json in the repo — commit it to share a
@@ -208,6 +212,7 @@ async function main(): Promise<void> {
 		const configOpts = {
 			backend: args.configure.backend,
 			model: args.configure.model,
+			effort: args.configure.effort,
 			mode: args.configure.mode,
 			scope: args.configure.scope,
 			yes: args.configure.yes,
@@ -262,6 +267,15 @@ async function main(): Promise<void> {
 	// gets it injected as the CLI's own --model flag (so `--backend codex --model
 	// gpt-5-codex` really runs codex on that model). This is how a user on Claude
 	// Code's Sonnet can make the advisor use Opus, or point codex at a model.
+	// Effort: an explicit --effort wins, else the config's thinkingLevel acts as the
+	// fallback for backends that support one. A backend that pinned its own with
+	// `@level` keeps it — that's the more specific choice.
+	const effortOverride = args.effort ?? config.solo.thinkingLevel;
+	if (effortOverride && config.solo.backend) {
+		const b = config.solo.backend as { effort?: string };
+		if (args.effort || !b.effort) b.effort = effortOverride;
+	}
+
 	const modelOverride = args.model ?? process.env.BPX_COUNCIL_MODEL ?? process.env.ANTHROPIC_MODEL;
 	if (modelOverride && config.solo.backend) {
 		(config.solo.backend as { model?: string }).model = modelOverride;
