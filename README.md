@@ -200,7 +200,8 @@ setup. An explicit `--config <path>` overrides discovery entirely.
 
 ## Picking the model
 
-Two knobs: which **backend** answers, and which **model** it runs.
+Two knobs: which **backend** answers, and which **model** it runs. (A third —
+how hard it thinks — is [below](#how-hard-it-thinks).)
 
 ```bash
 # Use codex as the advisor (its own configured model)
@@ -253,6 +254,43 @@ backend — bpx-council pipes the prompt to its stdin and puts `--model` up fron
 Of the HTTP backends only `anthropic` is implemented (needs `ANTHROPIC_API_KEY`);
 `openai`/`google` over HTTP aren't yet — for OpenAI models, use the `codex`
 backend. The HTTP default model is `claude-opus-4-8`.
+
+## How hard it thinks
+
+Some backends expose a reasoning-effort dial. `--effort` sets it:
+
+```bash
+bpx-council --backend codex --effort max "Is this migration plan sound?"
+bpx-council --backend claude --effort low "Quick sanity check on this regex"
+```
+
+Pin it per backend with `@level`, which is where the council gets interesting —
+different stances at different depths:
+
+```bash
+bpx-council --mode council \
+  --backends codex:gpt-5.6-sol@max,claude@high,codex:gpt-5.4-mini@low \
+  "Rewrite the parser, or patch it?"
+```
+
+An expensive architect, a cheap simplifier. Same idea as assigning models, one
+level down.
+
+**Which levels are valid depends on the backend, and for codex on the model** —
+`gpt-5.6-sol` accepts up to `ultra`, `gpt-5.5` stops at `xhigh`. The wizard asks
+codex what the model you picked actually supports and offers exactly those, so
+you can't pick one it would reject.
+
+| Backend | Effort control |
+|---|---|
+| `codex` | ✓ per-model levels, read live from its catalog |
+| `claude` | ✓ low, medium, high, xhigh, max |
+| everything else | ignored — no such control, so nothing is passed |
+
+Set a fallback for every run in the config as `solo.thinkingLevel`; a backend
+that pins its own with `@level` keeps it, since that's the more specific choice.
+Backends without an effort dial ignore it rather than being handed a flag
+they'd reject.
 
 ## Wiring it into your agent
 
@@ -326,7 +364,8 @@ rather place them yourself.
 -q, --question <q>    The question (or pass it positionally)
 -b, --backend <name>  Force one backend for everything
     --backends <a,b>  Council: one backend per persona, in order
-    --model <id>      Override the model (HTTP backends)
+    --model <id>      Override the model
+    --effort <level>  Reasoning effort (codex, claude); ignored elsewhere
     --rounds <n>      Debate rounds, 1-4 (default: 2)
     --timeout <ms>    Per-call timeout (default: 120000)
 -c, --config <path>   Config file (default: ~/.bpx-council.json)
