@@ -255,6 +255,46 @@ Of the HTTP backends only `anthropic` is implemented (needs `ANTHROPIC_API_KEY`)
 `openai`/`google` over HTTP aren't yet — for OpenAI models, use the `codex`
 backend. The HTTP default model is `claude-opus-4-8`.
 
+## Giving it files and images
+
+Piping works for one blob of context. `--file` is better when there's more than
+one, and it labels each by name so the advisor can tell them apart:
+
+```bash
+bpx-council --file src/auth.ts --file tests/auth.test.ts \
+  "Does the test actually cover the bug the code has?"
+```
+
+Files are read and folded into the prompt, so **every backend supports this** —
+no special handling needed. Each file is fenced and labelled, and told plainly
+if it was truncated (256KB per file, 512KB total) so the model doesn't reason
+about a function whose ending it never saw.
+
+Images are different, because a picture can't be folded into text — the backend
+has to actually take one:
+
+```bash
+bpx-council --backend codex --image mock.png "Does this layout look off?"
+```
+
+| Backend | Images | How |
+|---|---|---|
+| `codex` | ✓ | attached directly (`-i`), several at once |
+| `anthropic` | ✓ | inlined into the request as base64 |
+| `claude` | ✓ | no image flag — it opens the path itself with its own file tool |
+| everything else | ✗ | refuses with a message naming the ones that work |
+
+The claude route is the weaker one: it depends on that tool's own file access,
+so if it declines to read you'd get a confident answer about an image it never
+saw. codex and anthropic hand the model actual pixels.
+
+For codex, the catalog also says which models accept images, so pinning a
+text-only model with `--image` warns you before spending the call.
+
+Bad paths, directories, binary files passed to `--file`, and unsupported image
+types all fail immediately — before any model call, not two minutes into a
+council run.
+
 ## How hard it thinks
 
 Some backends expose a reasoning-effort dial. `--effort` sets it:
@@ -362,6 +402,8 @@ rather place them yourself.
 ```
 -m, --mode <mode>     solo (default) | council | debate | gut-check
 -q, --question <q>    The question (or pass it positionally)
+-f, --file <path>     Attach a text file as context (repeatable)
+    --image <path>    Attach an image (repeatable; codex, anthropic, claude)
 -b, --backend <name>  Force one backend for everything
     --backends <a,b>  Council: one backend per persona, in order
     --model <id>      Override the model
