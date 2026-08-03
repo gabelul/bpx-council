@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import { filterItems, renderFilter, renderSelect } from "../src/select.js";
+import { dimProvider, highlightMatch, MODE_HINTS, modeTone } from "../src/theme.js";
 import { parseAnthropicModels, parseCodexModels, parseOpencodeModels, backendListsModels } from "../src/models-list.js";
 
 describe("filterItems", () => {
@@ -93,5 +94,31 @@ describe("models-list parsing", () => {
 		expect(backendListsModels("anthropic")).toBe(true);
 		expect(backendListsModels("codex")).toBe(true);
 		expect(backendListsModels("claude")).toBe(false);
+	});
+});
+
+describe("theme", () => {
+	it("highlights the matched slice, case-insensitively, first hit only", () => {
+		// Colour is off when stdout isn't a TTY (vitest), so the text must survive untouched.
+		expect(highlightMatch("zai/glm-5", "GLM")).toContain("glm");
+		expect(highlightMatch("zai/glm-5", "zzz")).toBe("zai/glm-5");
+		expect(highlightMatch("zai/glm-5", "")).toBe("zai/glm-5");
+	});
+
+	it("leaves an unqualified model id alone when dimming the provider", () => {
+		expect(dimProvider("gpt-5.6-sol")).toBe("gpt-5.6-sol");
+		expect(dimProvider("zai/glm-5")).toContain("glm-5");
+	});
+
+	it("gives council, debate and gut-check distinct tones from solo", () => {
+		const tones = ["solo", "council", "debate", "gut-check"].map((m) => modeTone(m));
+		// Distinct function identities — each mode maps to its own colour helper.
+		expect(new Set(tones).size).toBe(4);
+	});
+
+	it("explains every mode in the picker", () => {
+		for (const m of ["solo", "council", "debate", "gut-check"]) {
+			expect(MODE_HINTS[m]).toBeTruthy();
+		}
 	});
 });

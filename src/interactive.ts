@@ -23,16 +23,29 @@ export interface KeyCtx<T> {
 	done(value: T | null): void;
 }
 
+export interface RunOpts {
+	/**
+	 * Erase the block once the picker finishes, instead of leaving it on screen.
+	 *
+	 * The rail-style wizard replaces each answered prompt with a one-line summary,
+	 * so the full option list has to go — otherwise you'd end up with every list
+	 * you've ever scrolled still sitting in the scrollback.
+	 */
+	clearOnDone?: boolean;
+}
+
 /**
  * Run a raw-mode key loop over a redrawn text block.
  *
  * @param render - Returns the full block to draw (newline-terminated).
  * @param handle - Called per keypress; mutates picker state and calls ctx.
+ * @param opts - See {@link RunOpts}.
  * @returns The value passed to ctx.done, or null on cancel / no raw mode.
  */
 export function runKeyLoop<T>(
 	render: () => string,
 	handle: (str: string | undefined, key: Key | undefined, ctx: KeyCtx<T>) => void,
+	opts?: RunOpts,
 ): Promise<T | null> {
 	return new Promise((resolve) => {
 		const input = process.stdin;
@@ -69,6 +82,12 @@ export function runKeyLoop<T>(
 				}
 			}
 			input.pause();
+			if (opts?.clearOnDone && lastLines > 0) {
+				// Rewind over the block and wipe it, leaving the cursor where the
+				// block started so the caller's summary line takes its place.
+				out.write(`\x1b[${lastLines}A\x1b[0J${SHOW_CURSOR}`);
+				return;
+			}
 			out.write(`${SHOW_CURSOR}\n`);
 		};
 

@@ -15,8 +15,11 @@ import { MODES, type Mode } from "./args.js";
 import { type BackendConfig, type BpxCouncilConfig, configPath, projectConfigWritePath } from "./config.js";
 import { availableBackends, parseBackendArg, type AvailableBackend } from "./detect.js";
 import { listModels } from "./models-list.js";
-import { runConfirm, runFilterSelect, runInput, runSelect } from "./select.js";
+import { printStarNudge } from "./nudge.js";
+import { BAR, railIntro, railNote, railOutro, railStep } from "./rail.js";
+import { runConfirm, runFilterSelect, runInput, runSelect, type SelectOption } from "./select.js";
 import { bold, cyan, dim, green, red, yellow } from "./style.js";
+import { kindBadge, label as themeLabel, MODE_HINTS, modeTone, value as themeValue } from "./theme.js";
 
 /** Council personas, in the order the council assigns backends. */
 const PERSONAS = ["architect", "critic", "simplifier"] as const;
@@ -143,18 +146,36 @@ function currentBackendName(existing: BpxCouncilConfig | undefined, available: A
 	return available[0]?.name ?? "codex";
 }
 
-function printPlan(path: string, config: BpxCouncilConfig): void {
-	console.log(`\n${bold("Config")}  ${dim(path)}\n`);
-	console.log(`  ${dim("mode")}     ${config.defaultMode}`);
+function printPlan(path: string, config: BpxCouncilConfig, rail = false): void {
 	const b = config.solo.backend;
-	const label = b?.type === "http" ? `${b.provider}${b.model ? ` (${b.model})` : ""}` : `${b?.command}${b?.model ? ` (${b.model})` : ""}`;
-	console.log(`  ${dim("advisor")}  ${label ?? "auto-detect"}`);
+	const model = b?.model ? `  ${themeValue(b.model)}` : dim("  (its own default)");
+	const kind = b?.type === "http" || b?.type === "cli" ? ` ${kindBadge(b.type)}` : "";
+	const label = b?.type === "http" ? `${b.provider}${kind}${model}` : `${b?.command ?? "auto-detect"}${kind}${model}`;
+
+	const rows = [
+		`${themeLabel("mode")}     ${modeTone(config.defaultMode)(config.defaultMode)}  ${dim(MODE_HINTS[config.defaultMode] ?? "")}`,
+		`${themeLabel("advisor")}  ${label}`,
+	];
 	if (config.council?.backends) {
-		console.log(`  ${dim("council")}`);
+		rows.push(dim("council"));
 		for (const [persona, spec] of Object.entries(config.council.backends)) {
-			console.log(`    ${dim(persona.padEnd(10))} ${spec}`);
+			rows.push(`  ${dim(persona.padEnd(10))} ${spec}`);
 		}
 	}
+
+	if (rail) {
+		// On the rail the summary is just more rail — no second frame around it.
+		console.log(`${dim(BAR)}  ${bold("Config")}  ${dim(prettyPath(path))}`);
+		console.log(dim(BAR));
+		for (const row of rows) console.log(`${dim(BAR)}  ${row}`);
+		console.log(dim(BAR));
+		return;
+	}
+
+	console.log(`\n  ${dim("┌")} ${bold("Config")}  ${dim(prettyPath(path))}`);
+	console.log(`  ${dim("│")}`);
+	for (const row of rows) console.log(`  ${dim("│")}  ${row}`);
+	console.log(`  ${dim("└")}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -162,9 +183,58 @@ function printPlan(path: string, config: BpxCouncilConfig): void {
 // real arrow-key / readline versions and tests script them deterministically.
 // ---------------------------------------------------------------------------
 
+/**
+ * Wraps a question in the chrome that makes this feel like a wizard rather than
+ * a series of unrelated prompts: how far along you are, where the answers are
+ * going, and what you've already picked.
+ *
+ * Injected as a function so `gatherAnswers` stays testable — scripted pickers
+ * ignore headers entirely, and without chrome the question passes through bare.
+ */
+export interface Chrome {
+	/** Decorate a question just before it's asked. */
+	ask(step: number, question: string): string;
+	/** Record an answered step — the rail collapses it to a single line. */
+	answered(question: string, answer: string, note?: string): void;
+}
+
+/**
+ * Shorten a path for display: `./x` inside the current directory, `~/x` under
+ * home, absolute otherwise.
+ *
+ * A project config prints as `./.bpx-council.json` rather than 90 characters of
+ * absolute path — and the chrome line has a width budget to keep.
+ */
+export function prettyPath(path: string): string {
+	const cwd = process.cwd();
+	if (path.startsWith(`${cwd}/`)) return `./${path.slice(cwd.length + 1)}`;
+	const home = process.env.HOME;
+	return home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+}
+
+/** No chrome — the question, unchanged. Used by tests and the headless path. */
+const plainChrome: Chrome = { ask: (_step, question) => question, answered: () => {} };
+
+/**
+ * Chrome for a rail-style run.
+ *
+ * Progress used to be dots and a breadcrumb trail crammed into every header.
+ * The rail carries that itself — each answered question stays on screen as one
+ * line — so all that is left here is a quiet step counter on the live question,
+ * plus the collapsed line that replaces the block once it is answered.
+ */
+function makeRailChrome(total: number, offset = 0): Chrome {
+	return {
+		// A step of 0 means "extra question" — the council prompt hangs off the last
+		// numbered step, and repeating its number reads like the wizard stalled.
+		ask: (step, question) => (step > 0 ? `${bold(question)} ${dim(`· step ${offset + step} of ${total}`)}` : bold(question)),
+		answered: (question, answer, note) => railStep(question, answer, note),
+	};
+}
+
 export interface Pickers {
 	/** Arrow-key single choice; the chosen value, or null on cancel. */
-	select(header: string, options: { label: string; value: string }[], initial: number): Promise<string | null>;
+	select(header: string, options: SelectOption[], initial: number): Promise<string | null>;
 	/** Type-to-filter over a long list; null = skip (use the default). */
 	filterSelect(header: string, items: string[]): Promise<string | null>;
 	/** Free-text line with a default. */
@@ -182,31 +252,44 @@ export interface Pickers {
  * the backend can enumerate its models (codex, opencode, anthropic) and a
  * free-text field otherwise. Council stays free-text — it's the advanced path.
  */
-export async function gatherAnswers(pickers: Pickers, available: AvailableBackend[], existing: BpxCouncilConfig | undefined): Promise<Answers> {
+export async function gatherAnswers(
+	pickers: Pickers,
+	available: AvailableBackend[],
+	existing: BpxCouncilConfig | undefined,
+	chrome: Chrome = plainChrome,
+): Promise<Answers> {
 	// Backend — arrow-key select. Plain labels so width-clipping isn't fooled by ANSI.
-	const backendOptions = available.map((b) => ({ label: `${b.name}  (${b.detail})`, value: b.name }));
+	const backendOptions = available.map((b) => ({ label: b.name, value: b.name, kind: b.kind, hint: b.detail }));
 	const backendDefault = Math.max(0, available.findIndex((b) => b.name === currentBackendName(existing, available)));
-	const backendName = (await pickers.select("Advisor backend?", backendOptions, backendDefault)) ?? available[backendDefault].name;
+	const backendName =
+		(await pickers.select(chrome.ask(1, "Advisor backend?"), backendOptions, backendDefault)) ?? available[backendDefault].name;
+	chrome.answered("Advisor backend", backendName, available.find((b) => b.name === backendName)?.detail);
 
 	// Model — a filterable list where the backend supports it, else free text.
 	let soloSpec = backendName;
 	const models = await pickers.listModels(backendName);
 	if (models.length > 0) {
-		const picked = await pickers.filterSelect(`Model? (${models.length} available — type to filter, esc for the default)`, models);
+		const picked = await pickers.filterSelect(
+			chrome.ask(2, `Which model? (${models.length} available — type to filter)`),
+			models,
+		);
 		if (picked) soloSpec = `${backendName}:${picked}`;
+		chrome.answered("Model", picked ?? `${backendName} default`);
 	} else {
-		const model = await pickers.ask("Pin a model? (blank = the backend's own default)", "");
+		const model = await pickers.ask(chrome.ask(2, "Pin a model? (blank = the backend's own default)"), "");
 		if (model) soloSpec = `${backendName}:${model}`;
+		chrome.answered("Model", model || `${backendName} default`);
 	}
 
 	// Mode — arrow-key select.
-	const modeOptions = (MODES as readonly Mode[]).map((m) => ({ label: m, value: m }));
+	const modeOptions = (MODES as readonly Mode[]).map((m) => ({ label: m, value: m, tone: modeTone(m), hint: MODE_HINTS[m] }));
 	const modeDefault = Math.max(0, MODES.indexOf(existing?.defaultMode ?? "solo"));
-	const mode = ((await pickers.select("Default mode?", modeOptions, modeDefault)) ?? "solo") as Mode;
+	const mode = ((await pickers.select(chrome.ask(3, "Default mode?"), modeOptions, modeDefault)) ?? "solo") as Mode;
+	chrome.answered("Default mode", mode);
 
 	// Council — advanced, free-text specs.
 	let council: Record<string, string> | undefined;
-	if (await pickers.confirm("Set up a multi-model council? (assign a backend per persona)", false)) {
+	if (await pickers.confirm(chrome.ask(0, "Set up a multi-model council? (assign a backend per persona)"), false)) {
 		council = {};
 		for (const persona of PERSONAS) {
 			const spec = await pickers.ask(`  ${persona} backend[:model]?`, soloSpec);
@@ -216,6 +299,9 @@ export async function gatherAnswers(pickers: Pickers, available: AvailableBacken
 			}
 			if (spec) council[persona] = spec;
 		}
+		chrome.answered("Council", Object.values(council).join(", ") || "none");
+	} else {
+		chrome.answered("Council", "no — one advisor");
 	}
 
 	return { mode, soloSpec, council };
@@ -228,18 +314,25 @@ export async function gatherAnswers(pickers: Pickers, available: AvailableBacken
  * from a single keystroke stream.
  */
 const productionPickers: Pickers = {
-	select: (header, options, initial) => runSelect(header, options, initial),
-	filterSelect: (header, items) => runFilterSelect(header, items, { allowCustom: true }),
-	ask: (question, def) => runInput(question, def),
-	confirm: (question, defaultYes) => runConfirm(question, defaultYes),
+	select: (header, options, initial) => runSelect(header, options, initial, { rail: true }),
+	filterSelect: (header, items) => runFilterSelect(header, items, { allowCustom: true, rail: true }),
+	ask: (question, def) => runInput(question, def, { rail: true }),
+	confirm: (question, defaultYes) => runConfirm(question, defaultYes, { rail: true }),
 	listModels,
 };
 
 /** Show the plan, then write (with an optional confirm). Shared by both paths. */
-async function finalize(path: string, config: BpxCouncilConfig, dryRun: boolean, confirmFn?: () => Promise<boolean>): Promise<number> {
-	printPlan(path, config);
+async function finalize(
+	path: string,
+	config: BpxCouncilConfig,
+	dryRun: boolean,
+	confirmFn?: () => Promise<boolean>,
+	rail = false,
+): Promise<number> {
+	printPlan(path, config, rail);
 	if (dryRun) {
-		console.log(dim("\nDry run — nothing written."));
+		if (rail) railOutro([dim("Dry run — nothing written.")]);
+		else console.log(dim("\nDry run — nothing written."));
 		return 0;
 	}
 	if (confirmFn && !(await confirmFn())) {
@@ -252,8 +345,16 @@ async function finalize(path: string, config: BpxCouncilConfig, dryRun: boolean,
 		console.error(red(`Couldn't write ${path}: ${e instanceof Error ? e.message : String(e)}`));
 		return 1;
 	}
-	console.log(`\n${green("✓")} ${bold("Wrote")} ${dim(path)}`);
-	console.log(dim("  Change it any time with `bpx-council config`, or edit the file directly."));
+	const saved = `${green("✓")} ${bold("Saved")} ${dim(prettyPath(path))}`;
+	const tryIt = `${dim("Try it:")} ${cyan('bpx-council "Is this auth flow sane?"')}`;
+	if (rail) {
+		railOutro([saved, tryIt]);
+	} else {
+		console.log(`\n  ${saved}`);
+		console.log(`  ${tryIt}`);
+		console.log(`  ${dim("Change it any time with `bpx-council config`, or edit the file directly.")}`);
+	}
+	printStarNudge("this saved you some setup");
 	return 0;
 }
 
@@ -284,34 +385,49 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 	const interactive = isTty && !opts.yes && !opts.backend && !opts.mode;
 
 	if (interactive) {
-		console.log(`\n${bold(cyan("bpx-council"))} ${dim("· configure your advisor")}\n`);
+		railIntro(bold(cyan("bpx-council")), "configure your advisor");
 
 		// Scope first — it decides which file we read and write. Skip the question
 		// when it's already pinned (--scope or an explicit --config).
 		let scope = opts.scope;
-		if (!scope && !opts.configPath) {
+		const asksScope = !scope && !opts.configPath;
+		// Four questions when we ask about scope, three when it's already pinned.
+		const total = asksScope ? 4 : 3;
+		const scopeChrome = makeRailChrome(total);
+		if (asksScope) {
 			const picked = await productionPickers.select(
-				"Save where?",
+				scopeChrome.ask(1, "Save where?"),
 				[
-					{ label: "This project  (.bpx-council.json in the repo)", value: "project" },
-					{ label: "Global  (~/.bpx-council.json)", value: "global" },
+					{ label: "This project", value: "project", hint: ".bpx-council.json in the repo — commit it for the team" },
+					{ label: "Global", value: "global", hint: "~/.bpx-council.json — every repo on this machine" },
 				],
 				1,
 			);
 			if (picked === null) {
-				console.log(dim("Cancelled."));
+				railOutro([dim("Cancelled.")]);
 				return 0;
 			}
 			scope = picked === "project" ? "project" : "global";
 		}
 		const path = targetPath({ ...opts, scope });
+		if (asksScope) scopeChrome.answered("Save where", scope === "project" ? "this project" : "global", prettyPath(path));
 
 		const read = readExisting(path);
 		if (!read.ok) return refuseUnparseable(path);
 
-		const answers = await gatherAnswers(productionPickers, available, read.config);
+		// Re-running? Say what's already there, so it's clear this edits rather
+		// than starts from scratch.
+		if (read.config) {
+			const b = read.config.solo?.backend;
+			const current = b?.type === "http" ? b.provider : b?.command;
+			railNote(`editing existing config${current ? ` · currently ${current}` : ""}`);
+		}
+
+		// The scope question, when asked, shifts everything gatherAnswers numbers.
+		const chrome = makeRailChrome(total, asksScope ? 1 : 0);
+		const answers = await gatherAnswers(productionPickers, available, read.config, chrome);
 		const config = buildConfig(answers, read.config);
-		return await finalize(path, config, opts.dryRun ?? false, () => runConfirm("Write this config?", true));
+		return await finalize(path, config, opts.dryRun ?? false, () => runConfirm(bold("Write this config?"), true, { rail: true }), true);
 	}
 
 	// Headless: flags + existing at the chosen scope, no confirm.
