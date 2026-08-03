@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { backendConfigFromSpec, buildConfig, gatherAnswers, type Pickers } from "../src/config-wizard.js";
+import { backendConfigFromSpec, buildConfig, gatherAnswers, prettyPath, type Pickers } from "../src/config-wizard.js";
 import type { AvailableBackend } from "../src/detect.js";
 import type { BpxCouncilConfig } from "../src/config.js";
 
@@ -38,6 +38,24 @@ function scriptedPickers(opts: {
 
 const CODEX: AvailableBackend[] = [{ name: "codex", kind: "cli", detail: "CLI on PATH" }];
 const OPENCODE: AvailableBackend[] = [{ name: "opencode", kind: "cli", detail: "CLI on PATH" }];
+
+describe("prettyPath", () => {
+	it("shows a path inside the working directory as ./relative", () => {
+		expect(prettyPath(`${process.cwd()}/.bpx-council.json`)).toBe("./.bpx-council.json");
+	});
+
+	it("shortens home to ~", () => {
+		const home = process.env.HOME;
+		// Only meaningful when HOME is set and isn't itself the cwd prefix.
+		if (home && !process.cwd().startsWith(home)) {
+			expect(prettyPath(`${home}/.bpx-council.json`)).toBe("~/.bpx-council.json");
+		}
+	});
+
+	it("leaves an unrelated absolute path alone", () => {
+		expect(prettyPath("/etc/bpx-council.json")).toBe("/etc/bpx-council.json");
+	});
+});
 
 describe("backendConfigFromSpec", () => {
 	it("builds a CLI backend, with and without a pinned model", () => {
