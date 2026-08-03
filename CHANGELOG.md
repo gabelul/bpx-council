@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/gabelul/bpx-council/compare/v1.6.0...v1.6.1) (2026-08-03)
+
+
+### Styles
+
+* draw the config wizard on a rail and colour it by meaning ([d95e285](https://github.com/gabelul/bpx-council/commit/d95e285b4002faa12f819f0be0b1ff3fa6285d8c))
+
 ## [1.6.0](https://github.com/gabelul/bpx-council/compare/v1.5.0...v1.6.0) (2026-07-31)
 
 
