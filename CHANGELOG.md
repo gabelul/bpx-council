@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/gabelul/bpx-council/compare/v1.6.1...v1.7.0) (2026-08-03)
+
+
+### Features
+
+* set reasoning effort per backend with [@level](https://github.com/level) specs ([40a7b65](https://github.com/gabelul/bpx-council/commit/40a7b658be6e3ea17f332d46b72649c43d35960f))
+
 ## [1.6.1](https://github.com/gabelul/bpx-council/compare/v1.6.0...v1.6.1) (2026-08-03)
 
 
