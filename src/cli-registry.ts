@@ -21,6 +21,10 @@ export interface RunArgOpts {
 	effort?: string;
 	/** Image paths, for backends that attach them as arguments. */
 	images?: string[];
+	/** Suppress the project's own agent instructions for this call. */
+	isolate?: boolean;
+	/** The advisor persona, for backends that take it as a real system prompt. */
+	systemPrompt?: string;
 }
 
 export interface CliBackendSpec {
@@ -71,6 +75,31 @@ export interface CliBackendSpec {
 	 * Omitted means no image support — better a clear error than a silent drop.
 	 */
 	images?: "attach" | "read";
+	/**
+	 * How this backend can be cut off from the project's agent instructions.
+	 *
+	 * Both codex and claude read the repo's AGENTS.md / CLAUDE.md by default, so a
+	 * "second opinion" asked inside a project arrives already following that
+	 * project's house rules — the bias you were trying to escape. Verified with a
+	 * planted instruction: both obeyed it, both stopped once these are passed.
+	 *
+	 *  - `"config"`         a config override suppresses the project doc. codex is
+	 *                       fully covered this way: AGENTS.md stops being read.
+	 *  - `"system-prompt"`  the persona is passed as a real system prompt, which
+	 *                       replaces the default one carrying the project's
+	 *                       CLAUDE.md. Also better hygiene: the persona stops being
+	 *                       just more text glued to the user message.
+	 *
+	 * Partial for claude, and worth knowing: this drops the *project* CLAUDE.md but
+	 * not the *user-global* ~/.claude/CLAUDE.md, which survives a system-prompt
+	 * override. `--bare` would drop both, except it also forces auth to
+	 * ANTHROPIC_API_KEY and never reads OAuth — which breaks the no-API-key setup
+	 * this tool is built around, so it isn't worth it as a default.
+	 *
+	 * Omitted means the backend either doesn't read project instructions (crush
+	 * doesn't) or gives us no way to stop it.
+	 */
+	isolation?: "config" | "system-prompt";
 }
 
 /** Pull the pickable slugs out of `codex debug models` JSON (drops hidden ones). */
@@ -137,8 +166,11 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		jsonl: true,
 		// codex exec [--model M] --sandbox read-only --skip-git-repo-check -   (prompt on stdin)
 		images: "attach",
-		runArgs: ({ model: m, effort: e, images = [] }) => [
+		isolation: "config",
+		runArgs: ({ model: m, effort: e, images = [], isolate }) => [
 			"exec",
+			// project_doc_max_bytes=0 stops codex loading AGENTS.md for this call.
+			...(isolate ? ["-c", "project_doc_max_bytes=0"] : []),
 			// -i is repeatable; codex attaches each to the initial prompt.
 			...images.flatMap((p) => ["-i", p]),
 			// -c is a config override, not a flag codex parses per-subcommand; unquoted
@@ -162,7 +194,15 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		label: "Claude CLI",
 		prompt: "stdin",
 		// claude [--model M] [--effort L] -p   (prompt on stdin). No model-list command.
-		runArgs: ({ model: m, effort: e }) => [...(m ? ["--model", m] : []), ...(e ? ["--effort", e] : []), "-p"],
+		isolation: "system-prompt",
+		runArgs: ({ model: m, effort: e, isolate, systemPrompt }) => [
+			...(m ? ["--model", m] : []),
+			...(e ? ["--effort", e] : []),
+			// Replacing the system prompt drops the default one that injects
+			// CLAUDE.md. Tools survive it — image-by-path still works.
+			...(isolate && systemPrompt ? ["--system-prompt", systemPrompt] : []),
+			"-p",
+		],
 		effort: { levels: ["low", "medium", "high", "xhigh", "max"] },
 		// No image flag — claude opens a path mentioned in the prompt with its own
 		// Read tool. Verified working, but it's the agent fetching the file, not us

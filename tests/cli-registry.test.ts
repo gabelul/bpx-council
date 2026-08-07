@@ -101,3 +101,30 @@ describe("parseLineList", () => {
 		expect(parseLineList("zai/glm-5\n\n  \nopenai/gpt-5\n")).toEqual(["zai/glm-5", "openai/gpt-5"]);
 	});
 });
+
+describe("isolation from project instructions", () => {
+	it("codex suppresses the project doc with a config override", () => {
+		const args = CLI_BACKENDS.codex.runArgs({ isolate: true });
+		expect(args.slice(0, 3)).toEqual(["exec", "-c", "project_doc_max_bytes=0"]);
+	});
+
+	it("codex passes nothing extra when not isolating", () => {
+		expect(CLI_BACKENDS.codex.runArgs({}).join(" ")).not.toContain("project_doc_max_bytes");
+	});
+
+	it("claude takes the persona as a real system prompt when isolating", () => {
+		const args = CLI_BACKENDS.claude.runArgs({ isolate: true, systemPrompt: "You are a critic." });
+		expect(args).toEqual(["--system-prompt", "You are a critic.", "-p"]);
+	});
+
+	it("claude keeps its plain form when not isolating", () => {
+		expect(CLI_BACKENDS.claude.runArgs({ systemPrompt: "You are a critic." })).toEqual(["-p"]);
+	});
+
+	it("only the backends that actually read project files declare isolation", () => {
+		expect(CLI_BACKENDS.codex.isolation).toBe("config");
+		expect(CLI_BACKENDS.claude.isolation).toBe("system-prompt");
+		// crush was tested with a planted instruction and ignored it.
+		expect(CLI_BACKENDS.crush.isolation).toBeUndefined();
+	});
+});

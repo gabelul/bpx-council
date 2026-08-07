@@ -47,6 +47,9 @@ Commands:
 Options:
   -m, --mode <mode>    solo (default) | council | debate | gut-check
   -q, --question <q>   The question (alternative to passing it positionally)
+      --isolate        Ignore the project's AGENTS.md / CLAUDE.md, so the
+                       advisor answers independently of your house rules
+                       (codex and claude; others don't read them anyway)
   -f, --file <path>    Attach a text file as context (repeatable)
       --image <path>   Attach an image (repeatable). codex and anthropic take
                        them directly; claude opens the path itself. Other
@@ -293,6 +296,10 @@ async function main(): Promise<void> {
 	if (effortOverride && config.solo.backend) {
 		const b = config.solo.backend as { effort?: string };
 		if (args.effort || !b.effort) b.effort = effortOverride;
+	}
+
+	if (args.isolate && config.solo.backend) {
+		(config.solo.backend as { isolate?: boolean }).isolate = true;
 	}
 
 	const modelOverride = args.model ?? process.env.BPX_COUNCIL_MODEL ?? process.env.ANTHROPIC_MODEL;

@@ -55,6 +55,8 @@ export interface CliArgs {
 	files: string[];
 	/** Image paths sent with the prompt (repeatable --image). */
 	images: string[];
+	/** Cut the advisor off from the project's AGENTS.md / CLAUDE.md. */
+	isolate: boolean;
 	rounds: number | undefined;
 	timeoutMs: number | undefined;
 	/**
@@ -82,6 +84,7 @@ export function parseArgs(argv: string[]): CliArgs {
 		effort: undefined,
 		files: [],
 		images: [],
+		isolate: false,
 		rounds: undefined,
 		timeoutMs: undefined,
 		backends: undefined,
@@ -119,6 +122,7 @@ export function parseArgs(argv: string[]): CliArgs {
 		else if (a === "--backend" || a === "-b") args.backend = argv[++i];
 		else if (a === "--question" || a === "-q") args.question = argv[++i];
 		else if (a === "--model") args.model = argv[++i];
+		else if (a === "--isolate") args.isolate = true;
 		else if (a === "--effort") args.effort = takeValue(argv, i) ? argv[++i] : undefined;
 		// Repeatable: each --file/--image adds one path rather than replacing.
 		else if (a === "--file" || a === "-f") {
