@@ -43,6 +43,15 @@ export interface CliBackendConfig {
 	 * index.ts refuses up front for the ones that don't, rather than dropping them.
 	 */
 	images?: string[];
+	/**
+	 * Cut the advisor off from the project's own agent instructions.
+	 *
+	 * Both codex and claude read AGENTS.md / CLAUDE.md from the working directory,
+	 * so without this a second opinion arrives already following the house rules
+	 * of the project it's reviewing. Backends that don't read them, or give us no
+	 * way to stop it, ignore this.
+	 */
+	isolate?: boolean;
 }
 
 export interface BackendResult {
@@ -77,9 +86,20 @@ export function callCliAdvisor(
 	const spec = cliSpecOrGeneric(command);
 	// Explicit args win outright; otherwise build from the registry, injecting the
 	// pinned model as the CLI's own flag.
-	const baseArgs = backend.args?.length ? backend.args : spec.runArgs({ model: backend.model, effort: backend.effort, images: backend.images });
+	const baseArgs = backend.args?.length
+		? backend.args
+		: spec.runArgs({
+				model: backend.model,
+				effort: backend.effort,
+				images: backend.images,
+				isolate: backend.isolate,
+				systemPrompt,
+			});
 	const timeoutMs = backend.timeoutMs ?? 120_000;
-	const promptText = `${systemPrompt}\n\n---\n\n=== User ===\n${userMessage}\n`;
+	// When the persona went in as a real system prompt (claude, isolated), sending
+	// it again on stdin would just duplicate it — so the body is the question alone.
+	const personaInArgs = backend.isolate === true && spec.isolation === "system-prompt" && !backend.args?.length;
+	const promptText = personaInArgs ? `${userMessage}\n` : `${systemPrompt}\n\n---\n\n=== User ===\n${userMessage}\n`;
 	// stdin CLIs read the prompt off the pipe; arg CLIs want it as the last argv
 	// entry (the value of their trailing -p/-x, or a positional prompt).
 	const viaArg = spec.prompt === "arg";

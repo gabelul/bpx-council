@@ -200,6 +200,38 @@ that pins its own with `@level` keeps it, since that's the more specific choice.
 Backends without an effort dial ignore it rather than being handed a flag
 they'd reject.
 
+### Staying independent of your project
+
+Both codex and claude read the repo's `AGENTS.md` / `CLAUDE.md` before
+answering. So a second opinion asked inside a project shows up already following
+that project's house rules, which is some of the bias you were trying to escape
+by asking someone else.
+
+`--isolate` cuts that off:
+
+```bash
+bpx-council --isolate "Is this auth flow actually sane, or are we just used to it?"
+```
+
+Tested by planting an instruction ("begin every reply with BANANA") in a repo's
+`AGENTS.md`. codex obeyed it, and stopped once `--isolate` was passed.
+
+| Backend | What `--isolate` does |
+|---|---|
+| `codex` | fully suppresses `AGENTS.md` for that call |
+| `claude` | drops the project `CLAUDE.md`, and passes the advisor persona as a real system prompt instead of prepending it as text |
+| everything else | nothing, since they don't read your project files (crush was tested and ignores them) |
+
+One honest limit: for claude this drops the project `CLAUDE.md` but **not** your
+user-global `~/.claude/CLAUDE.md`, which survives a system-prompt override.
+There's a `--bare` flag that drops both, except it also forces authentication
+through `ANTHROPIC_API_KEY` and never reads your OAuth login, which breaks the
+no-API-key setup this whole tool is built around. Not worth it as a default.
+
+It's opt-in, so nothing changes for existing setups, and an advisor that knows
+your conventions is genuinely useful sometimes. Reach for `--isolate` when you
+want the outside view.
+
 ### Files and images
 
 Piping works for one blob of context. `--file` is better when there's more than
@@ -395,6 +427,7 @@ backend. The HTTP default model is `claude-opus-4-8`.
 ```
 -m, --mode <mode>     solo (default) | council | debate | gut-check
 -q, --question <q>    The question (or pass it positionally)
+    --isolate         Ignore the project's AGENTS.md / CLAUDE.md
 -f, --file <path>     Attach a text file as context (repeatable)
     --image <path>    Attach an image (repeatable; codex, anthropic, claude)
 -b, --backend <name>  Force one backend for everything
