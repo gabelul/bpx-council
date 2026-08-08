@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type BpxCouncilConfig, mergeConfigs, projectConfigPath, projectConfigWritePath, resolveConfig } from "../src/config.js";
+import { type BpxCouncilConfig, DEFAULT_CONFIG, mergeConfigs, projectConfigPath, projectConfigWritePath, resolveConfig } from "../src/config.js";
 
 const BASE: BpxCouncilConfig = {
 	defaultMode: "solo",
@@ -101,5 +101,19 @@ describe("projectConfigPath / resolveConfig discovery", () => {
 		writeFileSync(explicit, JSON.stringify({ defaultMode: "debate" }));
 		const cfg = resolveConfig(explicit, dir);
 		expect(cfg.defaultMode).toBe("debate"); // explicit file, not global
+	});
+});
+
+describe("retired config keys", () => {
+	it("no longer ships solo.model or contextWindow as defaults", () => {
+		// Both were written into every config and read by nothing. Old files still
+		// parse (the keys stay optional on the type); new ones just don't get them.
+		expect(DEFAULT_CONFIG.solo.model).toBeUndefined();
+		expect(DEFAULT_CONFIG.contextWindow).toBeUndefined();
+	});
+
+	it("still preserves them when a user's existing file has them", () => {
+		const merged = mergeConfigs({ defaultMode: "solo", solo: {}, contextWindow: 300_000 }, { defaultMode: "council", solo: {} });
+		expect(merged.contextWindow).toBe(300_000);
 	});
 });

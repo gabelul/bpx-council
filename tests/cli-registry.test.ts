@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CLI_BACKENDS, cliSpec, cliSpecOrGeneric, parseLineList } from "../src/cli-registry.js";
+import { CLI_BACKENDS, cliSpec, cliSpecOrGeneric, parseLineList, unusableReason } from "../src/cli-registry.js";
 
 describe("runArgs — per-tool invocation", () => {
 	it("codex: model after exec, prompt on stdin", () => {
@@ -126,5 +126,21 @@ describe("isolation from project instructions", () => {
 		expect(CLI_BACKENDS.claude.isolation).toBe("system-prompt");
 		// crush was tested with a planted instruction and ignored it.
 		expect(CLI_BACKENDS.crush.isolation).toBeUndefined();
+	});
+});
+
+describe("unusable backends", () => {
+	it("marks amp unusable with a reason that explains itself", () => {
+		expect(unusableReason("amp")).toMatch(/dangerously-allow-all/);
+	});
+
+	it("leaves the working backends usable", () => {
+		for (const cmd of ["codex", "claude", "crush", "opencode", "gemini", "qwen", "cursor-agent"]) {
+			expect(unusableReason(cmd)).toBeUndefined();
+		}
+	});
+
+	it("says nothing about a command it's never heard of", () => {
+		expect(unusableReason("my-advisor")).toBeUndefined();
 	});
 });
