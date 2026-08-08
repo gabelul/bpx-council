@@ -33,7 +33,12 @@ export interface BackendConfig {
 }
 
 export interface AdvisorConfig {
-	model: string;
+	/**
+	 * @deprecated Never read. The model lives on the backend as `solo.backend.model`
+	 * (or a `backend:model` spec) — this was written as "auto" into every config and
+	 * acted on by nothing. Kept optional so old config files still parse.
+	 */
+	model?: string;
 	/**
 	 * Fallback reasoning effort when a backend doesn't pin its own with `@level`.
 	 *
@@ -60,20 +65,25 @@ export interface BpxCouncilConfig {
 	defaultMode: "solo" | "council" | "debate" | "gut-check";
 	solo: AdvisorConfig;
 	council?: CouncilConfig;
-	/** Context window to fit the input to (tokens). Falls back to a per-backend default. */
+	/**
+	 * @deprecated Never read. Shipped as a 200k default and consulted by nothing —
+	 * context limits are the backend's business. Kept optional so existing config
+	 * files still type-check; new configs don't write it.
+	 */
 	contextWindow?: number;
 }
 
 export const DEFAULT_CONFIG: BpxCouncilConfig = {
 	defaultMode: "solo",
 	solo: {
-		model: "auto",
-		// No default effort: each CLI already has its own, and forcing "medium"
-		// here would quietly override whatever the user configured in codex.
-		// No hardcoded backend — auto-detect at runtime (env vars > CLIs on PATH).
-		// See src/detect.ts. Override via ~/.bpx-council.json or --backend.
+		// Nothing here on purpose.
+		//
+		// No default effort: each CLI has its own, and forcing "medium" would
+		// quietly override whatever you configured in codex itself. No model: it
+		// belongs on the backend. No backend: it's auto-detected at runtime from
+		// env keys then CLIs on PATH (see src/detect.ts), and pinning one here
+		// would defeat that. Override any of it via config or a flag.
 	},
-	contextWindow: 200_000,
 };
 
 /** The global config: `~/.bpx-council.json`. */

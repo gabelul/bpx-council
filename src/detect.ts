@@ -10,7 +10,7 @@
 
 import { execSync } from "node:child_process";
 import type { CliBackendConfig } from "./backend.js";
-import { CLI_BACKENDS, KNOWN_CLI_COMMANDS } from "./cli-registry.js";
+import { CLI_BACKENDS, KNOWN_CLI_COMMANDS, unusableReason } from "./cli-registry.js";
 import type { HttpBackendConfig } from "./http-backend.js";
 import type { PtyBackendConfig } from "./pty-backend.js";
 import { isTmuxAvailable } from "./pty-backend.js";
@@ -146,7 +146,11 @@ export interface AvailableBackend {
 export function availableBackends(): AvailableBackend[] {
 	const out: AvailableBackend[] = [];
 	for (const cmd of KNOWN_CLI_COMMANDS) {
-		if (isOnPath(cmd)) out.push({ name: cmd, kind: "cli", detail: `${CLI_BACKENDS[cmd].label} · on PATH` });
+		// Installed but unusable (amp) is worse than absent: picking it would save a
+		// config that fails every consult. Leave it out of the offer entirely.
+		if (isOnPath(cmd) && !unusableReason(cmd)) {
+			out.push({ name: cmd, kind: "cli", detail: `${CLI_BACKENDS[cmd].label} · on PATH` });
+		}
 	}
 	if (process.env.ANTHROPIC_API_KEY) {
 		out.push({ name: "anthropic", kind: "http", detail: "ANTHROPIC_API_KEY set" });
@@ -157,7 +161,7 @@ export function availableBackends(): AvailableBackend[] {
 function detectFromPath(): DetectedBackend | undefined {
 	// First known advisor CLI on PATH wins, in registry order (codex first).
 	for (const cmd of KNOWN_CLI_COMMANDS) {
-		if (isOnPath(cmd)) {
+		if (isOnPath(cmd) && !unusableReason(cmd)) {
 			return { type: "cli", command: cmd, timeoutMs: 120_000 };
 		}
 	}

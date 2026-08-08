@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CLI_BACKENDS, cliSpec, cliSpecOrGeneric, parseLineList } from "../src/cli-registry.js";
+import { CLI_BACKENDS, cliSpec, cliSpecOrGeneric, parseLineList, unusableReason } from "../src/cli-registry.js";
 
 describe("runArgs — per-tool invocation", () => {
 	it("codex: model after exec, prompt on stdin", () => {
@@ -99,5 +99,21 @@ describe("cliSpecOrGeneric — custom binaries still work", () => {
 describe("parseLineList", () => {
 	it("keeps provider/model lines, drops blanks and whitespace", () => {
 		expect(parseLineList("zai/glm-5\n\n  \nopenai/gpt-5\n")).toEqual(["zai/glm-5", "openai/gpt-5"]);
+	});
+});
+
+describe("unusable backends", () => {
+	it("marks amp unusable with a reason that explains itself", () => {
+		expect(unusableReason("amp")).toMatch(/dangerously-allow-all/);
+	});
+
+	it("leaves the working backends usable", () => {
+		for (const cmd of ["codex", "claude", "crush", "opencode", "gemini", "qwen", "cursor-agent"]) {
+			expect(unusableReason(cmd)).toBeUndefined();
+		}
+	});
+
+	it("says nothing about a command it's never heard of", () => {
+		expect(unusableReason("my-advisor")).toBeUndefined();
 	});
 });

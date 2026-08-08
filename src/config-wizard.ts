@@ -87,15 +87,17 @@ export function backendConfigFromSpec(spec: string): BackendConfig {
  * Merge the wizard's answers into any existing config.
  *
  * Pure and total — the same answers always produce the same object. Preserves
- * keys the wizard doesn't manage (contextWindow, solo.thinkingLevel, …); a
+ * keys the wizard doesn't manage (solo.thinkingLevel, custom entries, …); a
  * council step that ran replaces `council` outright, one that was skipped leaves
  * the existing council untouched.
  */
 export function buildConfig(answers: Answers, existing?: BpxCouncilConfig): BpxCouncilConfig {
 	const solo: BpxCouncilConfig["solo"] = {
-		model: existing?.solo?.model ?? "auto",
 		backend: backendConfigFromSpec(answers.soloSpec),
 	};
+	// Carry a legacy `model` forward if one is already in the file, but never
+	// write a new one: it was decoration, and the model belongs on the backend.
+	if (existing?.solo?.model) solo.model = existing.solo.model;
 	if (existing?.solo?.thinkingLevel) solo.thinkingLevel = existing.solo.thinkingLevel;
 
 	const config: BpxCouncilConfig = {
@@ -400,7 +402,7 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 	const available = availableBackends();
 	if (available.length === 0) {
 		console.error(red("No advisor backend found on this machine."));
-		console.error(dim("Install a CLI (codex / claude / opencode) or set ANTHROPIC_API_KEY, then re-run."));
+		console.error(dim("Install codex, claude or crush (the three verified working), or set ANTHROPIC_API_KEY, then re-run."));
 		return 1;
 	}
 

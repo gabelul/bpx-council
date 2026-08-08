@@ -71,6 +71,16 @@ export interface CliBackendSpec {
 	 * Omitted means no image support — better a clear error than a silent drop.
 	 */
 	images?: "attach" | "read";
+	/**
+	 * Why this backend can't actually serve as an advisor, when it can't.
+	 *
+	 * Set means: don't offer it in the wizard, and refuse the call immediately
+	 * instead of spawning. amp is the case that prompted this — it's an executing
+	 * agent whose only non-interactive mode is --dangerously-allow-all, which we
+	 * won't pass, so it sits on a permission prompt until the timeout. Burning
+	 * four minutes to arrive at a failure we could predict is just rude.
+	 */
+	unusable?: string;
 }
 
 /** Pull the pickable slugs out of `codex debug models` JSON (drops hidden ones). */
@@ -217,6 +227,10 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		label: "Amp",
 		prompt: "arg",
 		ignoresModel: true, // amp has no model flag — it answers on whatever it picks.
+		unusable:
+			"amp is an executing agent: its only non-interactive mode is --dangerously-allow-all, " +
+			"which would let it run any command on your machine. A second opinion shouldn't need that, " +
+			"so bpx-council won't pass it — which leaves amp waiting on a permission prompt.",
 		// amp -x "<prompt>"   (execute mode; prompt is -x's value).
 		//
 		// Caveat, learned from a live smoke test: amp is an *executing* agent, and
@@ -241,6 +255,11 @@ export const KNOWN_CLI_COMMANDS = Object.keys(CLI_BACKENDS);
 export function imageSupport(name: string): "attach" | "read" | undefined {
 	if (name === "anthropic") return "attach";
 	return CLI_BACKENDS[name]?.images;
+}
+
+/** Why a backend can't be used as an advisor, or undefined when it can. */
+export function unusableReason(name: string): string | undefined {
+	return CLI_BACKENDS[name]?.unusable;
 }
 
 /** Registry entry for a known command, or `undefined` for a custom binary. */

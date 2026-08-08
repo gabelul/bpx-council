@@ -75,6 +75,11 @@ export function callCliAdvisor(
 ): Promise<BackendResult> {
 	const command = backend.command;
 	const spec = cliSpecOrGeneric(command);
+	// Some backends can't work as an advisor at all. Say so now rather than
+	// spawning and waiting out the timeout on a failure we already knew about.
+	if (spec.unusable) {
+		return Promise.resolve({ ok: false, text: "", error: `${command} can't be used as an advisor. ${spec.unusable}` });
+	}
 	// Explicit args win outright; otherwise build from the registry, injecting the
 	// pinned model as the CLI's own flag.
 	const baseArgs = backend.args?.length ? backend.args : spec.runArgs({ model: backend.model, effort: backend.effort, images: backend.images });

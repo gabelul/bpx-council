@@ -240,6 +240,22 @@ Bad paths, directories, binary files passed to `--file`, and unsupported image
 types all fail immediately, before any model call rather than two minutes into a
 council run.
 
+### Driving an interactive agent instead
+
+There's a third backend type beyond CLI and HTTP: `tmux` (also `pty` or
+`interactive`), which drives an agent running in a real terminal session rather
+than spawning a fresh headless one.
+
+```bash
+bpx-council --backend tmux "Is this auth flow sane?"
+```
+
+It needs `tmux` installed. Useful when you want the advisor to be a session
+that's already warmed up and authenticated instead of a cold subprocess, and it
+was the original route before the headless flags on codex and claude turned out
+to be good enough. Most people want a plain CLI backend; this is here for the
+cases where you don't.
+
 ## Configuring
 
 You don't have to touch the JSON. `bpx-council config` walks you through it with
@@ -397,7 +413,7 @@ backend. The HTTP default model is `claude-opus-4-8`.
 -q, --question <q>    The question (or pass it positionally)
 -f, --file <path>     Attach a text file as context (repeatable)
     --image <path>    Attach an image (repeatable; codex, anthropic, claude)
--b, --backend <name>  Force one backend for everything
+-b, --backend <name>  Force one backend (also: tmux | pty | interactive)
     --backends <a,b>  Council: one backend per persona, in order
     --model <id>      Override the model
     --effort <level>  Reasoning effort (codex, claude); ignored elsewhere
