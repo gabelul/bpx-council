@@ -65,16 +65,20 @@ describe("config", () => {
 		// No hardcoded backend — detectBackend picks the best available at runtime
 		// (env vars > CLIs on PATH > default). Override via config or --backend.
 		expect(DEFAULT_CONFIG.solo.backend).toBeUndefined();
-		expect(DEFAULT_CONFIG.solo.model).toBe("auto");
+		// solo.model used to default to "auto" and was read by nothing.
+		expect(DEFAULT_CONFIG.solo.model).toBeUndefined();
 	});
 
 	it("DEFAULT_CONFIG has a sane context window", () => {
-		expect(DEFAULT_CONFIG.contextWindow).toBeGreaterThan(10_000);
+		// contextWindow and solo.model used to ship as defaults and were read by
+		// nothing. New configs shouldn't carry either.
+		expect(DEFAULT_CONFIG.contextWindow).toBeUndefined();
+		expect(DEFAULT_CONFIG.solo.model).toBeUndefined();
 	});
 
 	it("loadConfig returns defaults when no file exists", () => {
 		const cfg = loadConfig("/nonexistent/path/bpx-council.json");
 		expect(cfg.defaultMode).toBe("solo");
-		expect(cfg.solo.model).toBe("auto");
+		expect(cfg.solo.model).toBeUndefined();
 	});
 });
