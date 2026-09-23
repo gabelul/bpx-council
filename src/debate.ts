@@ -8,6 +8,7 @@
  */
 
 import { callAdvisor, type BackendConfig } from "./backend.js";
+import { backendLabel, resolveSeatBackend, type SeatOptions } from "./detect.js";
 import { SYNTHESIZER_PROMPT } from "./personas.js";
 import type { BpxCouncilConfig } from "./config.js";
 
@@ -16,6 +17,11 @@ export interface DebateInput {
 	context?: string;
 	config: BpxCouncilConfig;
 	rounds?: number;
+	/** Per-seat backend specs override config, then fall back to Solo. */
+	advocate?: string;
+	critic?: string;
+	synthesizer?: string;
+	seatOptions?: SeatOptions;
 }
 
 export type DebateResult =
@@ -53,6 +59,9 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 	if (!backend) {
 		return { ok: false, error: "No backend configured." };
 	}
+	const advocate = resolveSeatBackend(input.advocate ?? config.debate?.advocate, backend, input.seatOptions);
+	const critic = resolveSeatBackend(input.critic ?? config.debate?.critic, backend, input.seatOptions);
+	const synthesizer = resolveSeatBackend(input.synthesizer ?? config.debate?.synthesizer, backend, input.seatOptions);
 
 	const baseMessage = context
 		? `=== Context ===\n${context}\n\n=== Question ===\n${question}`
@@ -94,28 +103,28 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 			? transcript
 			: `${transcript}\n\nDefend your position against the critique above, or concede it. Be specific.`;
 
-		note(`── round ${round + 1}/${rounds}: advocate …`);
-		const advocateResult = await callAdvisor(ADVOCATE_PROMPT, advocateMsg, backend);
+		note(`── round ${round + 1}/${rounds}: advocate · ${backendLabel(advocate)} …`);
+		const advocateResult = await callAdvisor(ADVOCATE_PROMPT, advocateMsg, advocate);
 		if (!advocateResult.ok) return bail(`Advocate failed (round ${round + 1}): ${advocateResult.error}`);
-		const advocateTurn = `### Advocate (round ${round + 1})\n${advocateResult.text}`;
+		const advocateTurn = `### Advocate (round ${round + 1}) · ${backendLabel(advocate)}\n${advocateResult.text}`;
 		transcript += `\n\n${advocateTurn}`;
 		roundLog.push(advocateTurn);
 
 		// Critic attacks.
 		const criticMsg = `${transcript}\n\nCritically reassess the advocate's position. Do not reflexively agree.`;
 
-		note(`── round ${round + 1}/${rounds}: critic …`);
-		const criticResult = await callAdvisor(CRITIC_PROMPT, criticMsg, backend);
+		note(`── round ${round + 1}/${rounds}: critic · ${backendLabel(critic)} …`);
+		const criticResult = await callAdvisor(CRITIC_PROMPT, criticMsg, critic);
 		if (!criticResult.ok) return bail(`Critic failed (round ${round + 1}): ${criticResult.error}`);
-		const criticTurn = `### Critic (round ${round + 1})\n${criticResult.text}`;
+		const criticTurn = `### Critic (round ${round + 1}) · ${backendLabel(critic)}\n${criticResult.text}`;
 		transcript += `\n\n${criticTurn}`;
 		roundLog.push(criticTurn);
 	}
 
 	// Synthesize.
-	note("── synthesizing verdict …");
+	note(`── synthesizing verdict · ${backendLabel(synthesizer)} …`);
 	const synthMessage = `${transcript}\n\n=== Original Question ===\n${question}`;
-	const synthResult = await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, backend);
+	const synthResult = await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthesizer);
 	if (!synthResult.ok) return bail(`Synthesis failed: ${synthResult.error}`);
 
 	note("");
@@ -123,5 +132,5 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 	// Return the debate, not just the ruling. Watching the advocate and critic
 	// actually go at each other is the reason to pay for this mode instead of
 	// solo — collapsing it to the verdict makes an expensive call look cheap.
-	return { ok: true, text: `${partial()}\n\n### Verdict\n${synthResult.text}` };
+	return { ok: true, text: `${partial()}\n\n### Verdict · ${backendLabel(synthesizer)}\n${synthResult.text}` };
 }

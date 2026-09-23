@@ -191,5 +191,5 @@ export async function callAdvisor(
 	if (backend.type === "tmux") {
 		return callPtyAdvisor(systemPrompt, userMessage, backend);
 	}
-	return callHttpAdvisor(systemPrompt, userMessage, backend);
+	return callHttpAdvisor(systemPrompt, userMessage, backend, backend.timeoutMs);
 }

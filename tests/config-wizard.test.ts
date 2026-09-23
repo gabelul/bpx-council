@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { backendConfigFromSpec, buildConfig, gatherAnswers, prettyPath, type Pickers } from "../src/config-wizard.js";
 import type { AvailableBackend } from "../src/detect.js";
-import type { BpxCouncilConfig } from "../src/config.js";
+import { mergeConfigs, type BpxCouncilConfig } from "../src/config.js";
 
 /** Pickers stand-in: each method hands back scripted answers in order. */
 function scriptedPickers(opts: {
@@ -125,14 +125,36 @@ describe("buildConfig", () => {
 		expect(cfg.solo.backend).toEqual({ type: "cli", command: "codex" });
 	});
 
-	it("replaces an existing council when a new one is set", () => {
+	it("preserves independent seats when only the advisor or Council members change", () => {
+		const existing: BpxCouncilConfig = {
+			defaultMode: "debate", solo: { backend: { type: "cli", command: "codex" } },
+			council: { backends: { critic: "claude" }, synthesizer: "codex:judge" },
+			debate: { advocate: "claude:adv", critic: "codex:critic" },
+		};
+		const updated = buildConfig({ mode: "solo", soloSpec: "opencode:new", council: { architect: "codex:architect" } }, existing);
+		expect(updated.council).toEqual({ backends: { architect: "codex:architect", critic: "claude" }, synthesizer: "codex:judge" });
+		expect(updated.debate).toEqual({ advocate: "claude:adv", critic: "codex:critic" });
+	});
+
+	it("can reset saved seat routes to inherited Solo", () => {
+		const existing: BpxCouncilConfig = {
+			defaultMode: "debate", solo: {},
+			council: { synthesizer: "claude:judge" }, debate: { advocate: "claude:adv", critic: "codex:critic" },
+		};
+		const cfg = buildConfig({ mode: "debate", soloSpec: "codex", councilSynthesizer: null,
+			debate: { advocate: null, synthesizer: "codex:new-judge" } }, existing);
+		expect(cfg.council?.synthesizer).toBeNull();
+		expect(cfg.debate).toEqual({ advocate: null, critic: "codex:critic", synthesizer: "codex:new-judge" });
+	});
+
+	it("merges changed Council members without dropping saved assignments", () => {
 		const existing: BpxCouncilConfig = {
 			defaultMode: "solo",
 			solo: { model: "auto" },
 			council: { backends: { architect: "claude", critic: "claude", simplifier: "claude" } },
 		};
 		const cfg = buildConfig({ mode: "council", soloSpec: "codex", council: { architect: "codex" } }, existing);
-		expect(cfg.council?.backends).toEqual({ architect: "codex" });
+		expect(cfg.council?.backends).toEqual({ architect: "codex", critic: "claude", simplifier: "claude" });
 	});
 });
 
@@ -167,22 +189,64 @@ describe("gatherAnswers (scripted pickers)", () => {
 		expect(answers.soloSpec).toBe("opencode:openai/gpt-5");
 	});
 
-	it("assembles a council, each persona defaulting to the advisor spec", async () => {
+	it("records only Council members changed during setup", async () => {
 		const answers = await gatherAnswers(
 			scriptedPickers({
 				selects: ["codex", "council"],
-				asks: ["gpt-5-codex", "", "claude", ""], // model, then architect/critic/simplifier
+				asks: ["gpt-5-codex", "", "claude", "", ""], // model, then three members, synth
 				confirms: [true],
 				models: [],
 			}),
 			CODEX,
 			undefined,
 		);
-		expect(answers.council).toEqual({
-			architect: "codex:gpt-5-codex",
-			critic: "claude",
-			simplifier: "codex:gpt-5-codex",
+		expect(answers.council).toEqual({ critic: "claude" });
+	});
+
+	it("offers a separate Council synthesizer spec", async () => {
+		const answers = await gatherAnswers(scriptedPickers({
+			selects: ["codex", "council"], confirms: [true],
+			asks: ["", "", "", "", "claude:judge@high"],
+		}), CODEX, undefined);
+		expect(answers.councilSynthesizer).toBe("claude:judge@high");
+	});
+
+	it("keeps an inherited Council synthesizer unless explicitly reset", async () => {
+		const answers = await gatherAnswers(scriptedPickers({
+			selects: ["codex", "council"], confirms: [true], asks: ["", "", "", "", ""],
+		}), CODEX, undefined);
+		expect(answers.councilSynthesizer).toBeUndefined();
+		const reset = await gatherAnswers(scriptedPickers({
+			selects: ["codex", "council"], confirms: [true], asks: ["", "", "", "", "inherit"],
+		}), CODEX, undefined);
+		expect(reset.councilSynthesizer).toBeNull();
+	});
+
+	it("does not override global Council members when project wizard edits only synthesis", async () => {
+		const global: BpxCouncilConfig = {
+			defaultMode: "solo", solo: {},
+			council: { backends: { architect: "claude:arch", critic: "codex:critic" } },
+		};
+		const answers = await gatherAnswers(scriptedPickers({
+			selects: ["codex", "council"], confirms: [true],
+			asks: ["", "", "", "", "opencode:judge"],
+		}), CODEX, undefined);
+		const project = buildConfig(answers);
+		const merged = mergeConfigs(global, project);
+		expect(merged.council).toEqual({
+			backends: { architect: "claude:arch", critic: "codex:critic" }, synthesizer: "opencode:judge",
 		});
+	});
+
+	it("offers each Debate role and lets an existing role return to Solo", async () => {
+		const existing: BpxCouncilConfig = {
+			defaultMode: "debate", solo: {}, debate: { advocate: "claude:old", critic: "codex:critic" },
+		};
+		const answers = await gatherAnswers(scriptedPickers({
+			selects: ["codex", "debate"], confirms: [false, true],
+			asks: ["", "inherit", "claude:new", "codex:judge"],
+		}), CODEX, existing);
+		expect(answers.debate).toEqual({ advocate: null, critic: "claude:new", synthesizer: "codex:judge" });
 	});
 
 	it("appends the chosen reasoning effort to the spec", async () => {

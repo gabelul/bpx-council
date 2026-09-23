@@ -35,8 +35,8 @@ Usage:
   bpx-council --mode gut-check "Does this smell off?"
 
 Commands:
-  config               Configure the advisor — default mode, backend, model,
-                      and council personas — into ~/.bpx-council.json.
+  config               Configure default mode, advisor and Council/Debate
+                      seat routes in ~/.bpx-council.json.
   setup                config, then offer to wire into your coding agents.
                       The one-command onboarding.
   install              Wire bpx-council into the coding agents on this machine
@@ -45,7 +45,7 @@ Commands:
                       See "bpx-council install --help".
 
 Options:
-  -m, --mode <mode>    solo (default) | council | debate | gut-check
+  -m, --mode <mode>    solo | council | debate | gut-check (config default if omitted)
   -q, --question <q>   The question (alternative to passing it positionally)
       --isolate        Ignore the project's AGENTS.md / CLAUDE.md, so the
                        advisor answers independently of your house rules
@@ -66,11 +66,13 @@ Options:
                       advocate turn plus a critic turn.
       --timeout <ms>   Per-call timeout (default: 120000). Raise it for long
                       debates on meaty questions.
-      --backends <a,b> Council mode: one backend per persona, in order
-                      (architect, critic, simplifier). This is what makes a
-                      council genuinely multi-model:
-                        --mode council --backends codex,claude,opencode
-                      Personas without a backend use the default.
+      --backends <a,b> Council: backends for architect, critic, simplifier.
+      --synthesizer <s> Council or Debate: verdict backend[:model][@effort].
+      --advocate <s>   Debate: advocate backend[:model][@effort].
+      --critic <s>     Debate: critic backend[:model][@effort].
+                      Unassigned seats use the shared --backend / Solo config.
+                      Example: --mode debate --advocate codex:gpt-5.6-sol
+                               --critic claude --synthesizer codex
   -h, --help           Show this help
   -v, --version        Print the installed version and exit
 
@@ -93,7 +95,7 @@ Config:
 const CONFIG_HELP = `bpx-council config / setup — configure your advisor.
 
 bpx-council works with zero config (it auto-detects a backend). This is the
-optional deepening: pin a backend and model, save a multi-model council, or
+optional deepening: pin a backend and model, assign Council/Debate seats, or
 change the default mode — written to ~/.bpx-council.json.
 
   config   Just the advisor config.
@@ -121,9 +123,9 @@ Options:
   -h, --help            This.
 
 An existing config is merged, not clobbered — keys the wizard doesn't manage
-(and any council you keep) survive. An unparseable config is refused, not
-overwritten. The multi-model council is set up interactively; --yes writes the
-core advisor config and keeps any council you already had.`;
+(and any Council/Debate routes you keep) survive. An unparseable config is
+refused, not overwritten. Seat routes are set up interactively; --yes writes
+the core advisor config and keeps existing seat assignments.`;
 
 const INSTALL_HELP = `bpx-council install — wire the council into your coding agents.
 
@@ -272,6 +274,19 @@ async function main(): Promise<void> {
 
 	// Layered: defaults ← global ← the repo's .bpx-council.json (discovered from cwd).
 	const config = resolveConfig(args.configPath, process.cwd());
+	const mode = args.modeExplicit ? args.mode : config.defaultMode;
+	if ((args.advocate || args.critic) && mode !== "debate") {
+		console.error("Error: --advocate and --critic require --mode debate.");
+		process.exit(1);
+	}
+	if (args.synthesizer && mode !== "council" && mode !== "debate") {
+		console.error("Error: --synthesizer requires --mode council or debate.");
+		process.exit(1);
+	}
+	if (args.backends && mode !== "council") {
+		console.error("Error: --backends requires --mode council.");
+		process.exit(1);
+	}
 
 	// Auto-detect the backend if not explicitly configured. Override chain:
 	// --backend arg > config file > env vars (ANTHROPIC_API_KEY etc.) > CLIs on
@@ -317,39 +332,41 @@ async function main(): Promise<void> {
 	// dropping them — a confident answer about an image the model never saw is
 	// the worst possible outcome here.
 	if (args.images.length > 0) {
-		const backend = config.solo.backend as { type?: string; command?: string; provider?: string; model?: string } | undefined;
-		const command = backend?.type === "http" ? backend.provider : backend?.command;
-		const support = command ? imageSupport(command) : undefined;
-		if (!support) {
-			console.error(`Error: ${command ?? "this backend"} can't take images. Try: codex, claude, or anthropic.`);
-			process.exit(1);
+		// Multi-seat modes validate and attach images on each resolved route before
+		// the first call; Solo only needs the shared backend checked here.
+		if (mode === "solo" || mode === "gut-check") {
+			const backend = config.solo.backend as { type?: string; command?: string; provider?: string; model?: string } | undefined;
+			const command = backend?.type === "http" ? backend.provider : backend?.command;
+			const support = backend?.type === "tmux" ? undefined : command ? imageSupport(command) : undefined;
+			if (!support) {
+				console.error(`Error: ${command ?? "this backend"} can't take images. Try: codex, claude, or anthropic.`);
+				process.exit(1);
+			}
+			if (modelTakesImages(command as string, backend?.model) === false) {
+				console.error(`Warning: ${backend?.model} takes text only — the image may be ignored. Pick a model with image input.`);
+			}
+			if (support === "attach") (config.solo.backend as { images?: string[] }).images = args.images;
 		}
-		// codex publishes image support per model; warn if the pinned one is text-only.
-		if (modelTakesImages(command as string, backend?.model) === false) {
-			console.error(`Warning: ${backend?.model} takes text only — the image may be ignored. Pick a model with image input.`);
-		}
-		if (support === "attach") {
-			(config.solo.backend as { images?: string[] }).images = args.images;
-		} else {
-			// claude has no image flag; it opens paths named in the prompt itself.
-			fileContext = `${fileContext ? `${fileContext}\n\n` : ""}Images to look at: ${args.images.join(", ")}`;
-		}
+		// Claude seats open paths themselves; attach-capable seats get pixels too.
+		fileContext = `${fileContext ? `${fileContext}\n\n` : ""}Images to look at: ${args.images.join(", ")}`;
 	}
 
 	const context = [fileContext, stdinContext].filter(Boolean).join("\n\n");
 	const commonArgs = { question: args.question, context: context || undefined, config };
+	const seatOptions = { timeoutMs: args.timeoutMs, isolate: args.isolate, images: args.images };
 
-	// `partial` is debate-only: rounds that completed before a later call failed.
+	// `partial` carries completed Council members or Debate rounds if synthesis fails.
 	let result: { ok: true; text: string } | { ok: false; error: string; partial?: string };
 
-	switch (args.mode) {
+	switch (mode) {
 		case "council": {
-			const r = await runCouncil({ ...commonArgs, backends: args.backends });
-			result = r.ok ? { ok: true, text: r.text } : { ok: false, error: r.error };
+			const r = await runCouncil({ ...commonArgs, backends: args.backends, synthesizer: args.synthesizer, seatOptions });
+			result = r.ok ? { ok: true, text: r.text } : { ok: false, error: r.error, partial: r.partial };
 			break;
 		}
 		case "debate": {
-			const r = await runDebate({ ...commonArgs, rounds: args.rounds });
+			const r = await runDebate({ ...commonArgs, rounds: args.rounds, advocate: args.advocate, critic: args.critic,
+				synthesizer: args.synthesizer, seatOptions });
 			result = r;
 			break;
 		}

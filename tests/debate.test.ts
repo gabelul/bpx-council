@@ -50,6 +50,44 @@ describe("runDebate", () => {
 		expect(result.text).toContain("Patch now, plan the rewrite.");
 	});
 
+	it("uses independent roles across rounds and attributes each turn", async () => {
+		callAdvisor.mockResolvedValue(ok("turn"));
+		const routes = { ...config, debate: {
+			advocate: "codex:adv@high", critic: "claude:critic", synthesizer: "codex:judge",
+		} } as never;
+		const result = await runDebate({ question: "Q", config: routes, rounds: 2 });
+		expect(callAdvisor.mock.calls.map((call) => (call[2] as { model?: string }).model))
+			.toEqual(["adv", "critic", "adv", "critic", "judge"]);
+		expect(callAdvisor.mock.calls[0]?.[2]).toMatchObject({ command: "codex", effort: "high" });
+		expect(result.ok && result.text).toContain("### Advocate (round 1) · codex:adv@high");
+		expect(result.ok && result.text).toContain("### Critic (round 2) · claude:critic");
+		expect(result.ok && result.text).toContain("### Verdict · codex:judge");
+	});
+
+	it("prefers CLI role specs and inherits Solo for null roles", async () => {
+		callAdvisor.mockResolvedValue(ok("turn"));
+		const routes = { ...config, debate: { advocate: "claude:old", critic: null, synthesizer: "claude:old" } } as never;
+		await runDebate({ question: "Q", config: routes, rounds: 1,
+			advocate: "codex:new", synthesizer: "codex:judge", seatOptions: { timeoutMs: 5000, isolate: true } });
+		expect(callAdvisor.mock.calls.map((call) => (call[2] as { command?: string }).command))
+			.toEqual(["codex", "codex", "codex"]);
+		expect(callAdvisor.mock.calls[0]?.[2]).toMatchObject({ model: "new", timeoutMs: 5000, isolate: true });
+		expect(callAdvisor.mock.calls[1]?.[2]).toMatchObject({ command: "codex", timeoutMs: 1000 });
+	});
+
+	it("rejects an image-blind critic before spending the advocate call", async () => {
+		await expect(runDebate({ question: "Q", config, rounds: 2,
+			critic: "opencode:critic", seatOptions: { images: ["/tmp/layout.png"] } }))
+			.rejects.toThrow("can't take images");
+		expect(callAdvisor).not.toHaveBeenCalled();
+	});
+
+	it("rejects invalid role specs before starting a multi-round debate", async () => {
+		await expect(runDebate({ question: "Q", config, rounds: 2, synthesizer: ":bad" }))
+			.rejects.toThrow("Invalid backend spec");
+		expect(callAdvisor).not.toHaveBeenCalled();
+	});
+
 	it("does not echo the user's own question back in the output", async () => {
 		callAdvisor
 			.mockResolvedValueOnce(ok("Advocate says yes."))

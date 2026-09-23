@@ -47,6 +47,8 @@ export interface CliArgs {
 	configure: ConfigureArgs;
 	question: string | undefined;
 	mode: Mode;
+	/** Whether --mode was passed, so config.defaultMode only wins when it wasn't. */
+	modeExplicit: boolean;
 	configPath: string | undefined;
 	backend: string | undefined;
 	model: string | undefined;
@@ -64,6 +66,10 @@ export interface CliArgs {
 	 * `--backends codex,claude,opencode` → architect, critic, simplifier.
 	 */
 	backends: string[] | undefined;
+	/** Optional backend[:model][@effort] overrides for Council/Debate seats. */
+	synthesizer: string | undefined;
+	advocate: string | undefined;
+	critic: string | undefined;
 	help: boolean;
 	/** Print the version and exit. */
 	version: boolean;
@@ -78,6 +84,7 @@ export function parseArgs(argv: string[]): CliArgs {
 		configure: { backend: undefined, model: undefined, effort: undefined, mode: undefined, scope: undefined, yes: false, dryRun: false },
 		question: undefined,
 		mode: "solo",
+		modeExplicit: false,
 		configPath: undefined,
 		backend: undefined,
 		model: undefined,
@@ -88,6 +95,9 @@ export function parseArgs(argv: string[]): CliArgs {
 		rounds: undefined,
 		timeoutMs: undefined,
 		backends: undefined,
+		synthesizer: undefined,
+		advocate: undefined,
+		critic: undefined,
 		help: false,
 		version: false,
 		unknown: [],
@@ -115,8 +125,10 @@ export function parseArgs(argv: string[]): CliArgs {
 			// used to fall through to the solo branch and answer as if nothing
 			// were wrong — you'd pay for one model and think you ran three.
 			const value = argv[++i];
-			if (value !== undefined && (MODES as readonly string[]).includes(value)) args.mode = value as Mode;
-			else args.unknown.push(`--mode ${value ?? ""}`.trim());
+			if (value !== undefined && (MODES as readonly string[]).includes(value)) {
+				args.mode = value as Mode;
+				args.modeExplicit = true;
+			} else args.unknown.push(`--mode ${value ?? ""}`.trim());
 		}
 		else if (a === "--config" || a === "-c") args.configPath = argv[++i];
 		else if (a === "--backend" || a === "-b") args.backend = argv[++i];
@@ -147,6 +159,16 @@ export function parseArgs(argv: string[]): CliArgs {
 			// doesn't silently assign a blank backend to the critic.
 			const specs = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 			args.backends = specs.length > 0 ? specs : undefined;
+		}
+		else if (a === "--synthesizer" || a === "--advocate" || a === "--critic") {
+			const spec = takeValue(argv, i);
+			if (spec === undefined || !spec.trim()) args.unknown.push(`${a} (missing value)`);
+			else {
+				i++;
+				if (a === "--synthesizer") args.synthesizer = spec.trim();
+				else if (a === "--advocate") args.advocate = spec.trim();
+				else args.critic = spec.trim();
+			}
 		}
 		// An unrecognised flag used to fall through to the bare-word branch
 		// below, where its *argument* became the question and the real question

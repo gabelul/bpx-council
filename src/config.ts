@@ -53,18 +53,25 @@ export interface AdvisorConfig {
 export interface CouncilConfig {
 	/**
 	 * Persona name → backend spec, e.g. `{ "architect": "codex", "critic": "claude" }`.
-	 *
-	 * This is what makes council mode actually multi-model. Any persona without
-	 * an entry falls back to the shared `solo.backend`, so a config that omits
-	 * this behaves exactly as before.
+	 * Unassigned personas use the shared `solo.backend`.
 	 */
 	backends?: Record<string, string>;
+	/** Backend[:model][@effort] for the verdict; null resets inherited config to Solo. */
+	synthesizer?: string | null;
+}
+
+/** Debate seat routes; each absent seat inherits the shared Solo backend. */
+export interface DebateConfig {
+	advocate?: string | null;
+	critic?: string | null;
+	synthesizer?: string | null;
 }
 
 export interface BpxCouncilConfig {
 	defaultMode: "solo" | "council" | "debate" | "gut-check";
 	solo: AdvisorConfig;
 	council?: CouncilConfig;
+	debate?: DebateConfig;
 	/**
 	 * @deprecated Never read. Shipped as a 200k default and consulted by nothing —
 	 * context limits are the backend's business. Kept optional so existing config
@@ -135,8 +142,8 @@ function readConfigFile(path: string): Partial<BpxCouncilConfig> | undefined {
  *
  * `over` wins. `solo` merges key-by-key so a project can override just the model
  * (and `solo.backend` is atomic — a cli backend never half-merges with an http
- * one). `council.backends` merges per-persona, so a project can reassign one
- * persona and inherit the rest. Everything else is a plain override.
+ * one). `council.backends` merges per-persona, while Council synthesis and
+ * Debate seats merge individually. Everything else is a plain override.
  */
 export function mergeConfigs(base: BpxCouncilConfig, over: Partial<BpxCouncilConfig>): BpxCouncilConfig {
 	const merged: BpxCouncilConfig = {
@@ -144,9 +151,12 @@ export function mergeConfigs(base: BpxCouncilConfig, over: Partial<BpxCouncilCon
 		...over,
 		solo: { ...base.solo, ...over.solo },
 	};
-	const backends = { ...base.council?.backends, ...over.council?.backends };
-	if (Object.keys(backends).length > 0) merged.council = { backends };
-	else if (base.council || over.council) merged.council = over.council ?? base.council;
+	if (base.council || over.council) {
+		merged.council = { ...base.council, ...over.council };
+		const backends = { ...base.council?.backends, ...over.council?.backends };
+		if (Object.keys(backends).length > 0) merged.council.backends = backends;
+	}
+	if (base.debate || over.debate) merged.debate = { ...base.debate, ...over.debate };
 	return merged;
 }
 

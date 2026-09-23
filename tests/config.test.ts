@@ -33,6 +33,22 @@ describe("mergeConfigs", () => {
 		expect((merged.solo.backend as { command?: string }).command).toBeUndefined();
 	});
 
+	it("merges independent verdict and Debate routes without losing other seats", () => {
+		const base: BpxCouncilConfig = {
+			...BASE,
+			council: { backends: { architect: "codex" }, synthesizer: "claude:opus" },
+			debate: { advocate: "codex:adv", critic: "claude:critic", synthesizer: "codex:judge" },
+		};
+		const merged = mergeConfigs(base, {
+			council: { backends: { critic: "opencode:critic" } },
+			debate: { critic: null },
+		});
+		expect(merged.council).toEqual({
+			backends: { architect: "codex", critic: "opencode:critic" }, synthesizer: "claude:opus",
+		});
+		expect(merged.debate).toEqual({ advocate: "codex:adv", critic: null, synthesizer: "codex:judge" });
+	});
+
 	it("merges council backends per-persona", () => {
 		const withCouncil: BpxCouncilConfig = {
 			...BASE,
@@ -93,6 +109,20 @@ describe("projectConfigPath / resolveConfig discovery", () => {
 		const cfg = resolveConfig(undefined, dir);
 		expect(cfg.defaultMode).toBe("council"); // from global
 		expect(cfg.solo.backend).toEqual({ type: "http", provider: "anthropic", model: "claude-opus-4-8" }); // from project
+	});
+
+	it("layers a project seat override over global seats", () => {
+		writeFileSync(join(home, ".bpx-council.json"), JSON.stringify({
+			council: { backends: { architect: "codex" }, synthesizer: "claude:opus" },
+			debate: { advocate: "codex:adv", critic: "claude:critic" },
+		}));
+		mkdirSync(join(dir, ".git"));
+		writeFileSync(join(dir, ".bpx-council.json"), JSON.stringify({
+			council: { synthesizer: null }, debate: { critic: "opencode:critic" },
+		}));
+		const cfg = resolveConfig(undefined, dir);
+		expect(cfg.council).toEqual({ backends: { architect: "codex" }, synthesizer: null });
+		expect(cfg.debate).toEqual({ advocate: "codex:adv", critic: "opencode:critic" });
 	});
 
 	it("an explicit --config path replaces discovery", () => {

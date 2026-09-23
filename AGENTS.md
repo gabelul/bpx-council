@@ -40,16 +40,20 @@ word shouldn't be used for it. The distinction was false for the project's
 first three days; see troubleshooting.
 
 The resolved model rides on each member and prints in its header
-(`### critic [against] · claude`). Keep that — attribution is the reason to
-pay for several models, and without it the output looks identical to the
-single-model run.
+(`### critic [against] · claude`). Council synthesis can separately select
+`council.synthesizer` / `--synthesizer`; Debate has `debate.advocate`,
+`debate.critic`, and `debate.synthesizer` / matching flags. Unassigned seats
+inherit `solo.backend`. Keep model attribution on turns and verdicts — without
+it, different models look like one.
 
 ### Multi-call modes: decide what survives a failure
 
 `council` and `debate` make several sequential or parallel model calls. Any
 one of them can time out — that's routine, not exceptional. Both modes return
-whatever completed rather than discarding the run: `council` falls back to raw
-member verdicts, `debate` returns completed rounds via `partial`.
+whatever completed rather than discarding the run: `council` returns raw
+member verdicts via `partial` if synthesis fails, `debate` returns completed
+rounds via `partial`. Both report failure so callers don't mistake partial
+work for a finished verdict.
 
 Keep that property when editing either. Losing five minutes of good rounds to
 one timeout is the single worst thing this tool can do to a user, and it has

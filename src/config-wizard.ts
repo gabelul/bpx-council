@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { MODES, type Mode } from "./args.js";
-import { type BackendConfig, type BpxCouncilConfig, configPath, projectConfigWritePath } from "./config.js";
+import { type BackendConfig, type BpxCouncilConfig, type DebateConfig, configPath, projectConfigWritePath } from "./config.js";
 import { availableBackends, parseBackendArg, type AvailableBackend } from "./detect.js";
 import { listEfforts, listModels } from "./models-list.js";
 import { printStarNudge } from "./nudge.js";
@@ -55,8 +55,12 @@ export interface Answers {
 	mode: Mode;
 	/** The advisor backend spec, e.g. "codex" or "codex:gpt-5-codex". */
 	soloSpec: string;
-	/** Council persona → backend spec, if the user set one up. */
+	/** Only Council members explicitly changed in this wizard run. */
 	council?: Record<string, string>;
+	/** null means inherit Solo, including when a project overrides a global choice. */
+	councilSynthesizer?: string | null;
+	/** Debate roles when the user opted into configuring them. */
+	debate?: DebateConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,9 +91,9 @@ export function backendConfigFromSpec(spec: string): BackendConfig {
  * Merge the wizard's answers into any existing config.
  *
  * Pure and total — the same answers always produce the same object. Preserves
- * keys the wizard doesn't manage (solo.thinkingLevel, custom entries, …); a
- * council step that ran replaces `council` outright, one that was skipped leaves
- * the existing council untouched.
+ * keys the wizard doesn't manage (solo.thinkingLevel, custom entries, …).
+ * Updating Council members preserves their synthesizer unless explicitly changed;
+ * skipping a seat setup keeps existing assignments.
  */
 export function buildConfig(answers: Answers, existing?: BpxCouncilConfig): BpxCouncilConfig {
 	const solo: BpxCouncilConfig["solo"] = {
@@ -107,10 +111,15 @@ export function buildConfig(answers: Answers, existing?: BpxCouncilConfig): BpxC
 	};
 
 	if (answers.council && Object.keys(answers.council).length > 0) {
-		config.council = { backends: answers.council };
+		config.council = { ...existing?.council,
+			backends: { ...existing?.council?.backends, ...answers.council } };
 	} else if (existing?.council) {
 		config.council = existing.council;
 	}
+	if (answers.councilSynthesizer !== undefined) {
+		config.council = { ...config.council, synthesizer: answers.councilSynthesizer };
+	}
+	if (answers.debate !== undefined) config.debate = { ...existing?.debate, ...answers.debate };
 	return config;
 }
 
@@ -163,10 +172,19 @@ function printPlan(path: string, config: BpxCouncilConfig, rail = false): void {
 		`${themeLabel("mode")}     ${modeTone(config.defaultMode)(config.defaultMode)}  ${dim(MODE_HINTS[config.defaultMode] ?? "")}`,
 		`${themeLabel("advisor")}  ${label}`,
 	];
-	if (config.council?.backends) {
+	if (config.council) {
 		rows.push(dim("council"));
-		for (const [persona, spec] of Object.entries(config.council.backends)) {
-			rows.push(`  ${dim(persona.padEnd(10))} ${spec}`);
+		for (const [persona, spec] of Object.entries(config.council.backends ?? {})) {
+			rows.push(`  ${dim(persona.padEnd(12))} ${spec}`);
+		}
+		if (config.council.synthesizer !== undefined) {
+			rows.push(`  ${dim("synthesizer".padEnd(12))} ${config.council.synthesizer ?? "shared Solo"}`);
+		}
+	}
+	if (config.debate) {
+		rows.push(dim("debate"));
+		for (const [role, spec] of Object.entries(config.debate)) {
+			rows.push(`  ${dim(role.padEnd(12))} ${spec ?? "shared Solo"}`);
 		}
 	}
 
@@ -259,7 +277,8 @@ export interface Pickers {
  *
  * Backend and mode are arrow-key selects. The model is a filterable list when
  * the backend can enumerate its models (codex, opencode, anthropic) and a
- * free-text field otherwise. Council stays free-text — it's the advanced path.
+ * free-text field otherwise. Council and Debate seats use backend specs as
+ * free text; `keep` preserves layered config and `inherit` resets to Solo.
  */
 export async function gatherAnswers(
 	pickers: Pickers,
@@ -317,24 +336,45 @@ export async function gatherAnswers(
 	const mode = ((await pickers.select(chrome.ask(3, "Default mode?"), modeOptions, modeDefault)) ?? "solo") as Mode;
 	chrome.answered("Default mode", mode);
 
-	// Council — advanced, free-text specs.
+	// Council — advanced, free-text specs. "keep" leaves layered config alone;
+	// "inherit" explicitly resets a role to the shared Solo backend.
 	let council: Record<string, string> | undefined;
-	if (await pickers.confirm(chrome.ask(0, "Set up a multi-model council? (assign a backend per persona)"), false)) {
+	let councilSynthesizer: string | null | undefined;
+	if (await pickers.confirm(chrome.ask(0, "Edit Council member routes and synthesizer?"), false)) {
 		council = {};
 		for (const persona of PERSONAS) {
-			const spec = await pickers.ask(`  ${persona} backend[:model]?`, soloSpec);
+			const spec = await pickers.ask(`  ${persona} backend[:model][@effort]? (keep = unchanged)`, existing?.council?.backends?.[persona] ?? "keep");
+			if (spec.toLowerCase() === "keep") continue;
 			const name = spec.split(":")[0];
 			if (!available.some((b) => b.name === name)) {
 				console.log(`    ${yellow("note")} ${dim(`"${name}" isn't detected right now — keeping it anyway.`)}`);
 			}
-			if (spec) council[persona] = spec;
+			council[persona] = spec;
 		}
-		chrome.answered("Council", Object.values(council).join(", ") || "none");
+		const spec = await pickers.ask("  synthesizer backend[:model][@effort]? (keep = unchanged; inherit = shared Solo)", existing?.council?.synthesizer ?? "keep");
+		councilSynthesizer = spec.toLowerCase() === "keep" ? undefined : spec.toLowerCase() === "inherit" ? null : spec;
+		chrome.answered("Council", `${Object.values(council).join(", ") || "members unchanged"}; verdict ${councilSynthesizer === undefined ? "unchanged" : (councilSynthesizer ?? "shared Solo")}`);
 	} else {
-		chrome.answered("Council", "no — one advisor");
+		chrome.answered("Council", "no change");
 	}
 
-	return { mode, soloSpec, council };
+	let debate: DebateConfig | undefined;
+	if (mode === "debate" && await pickers.confirm(chrome.ask(0, "Assign different backends to Debate seats?"), false)) {
+		debate = {};
+		for (const role of ["advocate", "critic", "synthesizer"] as const) {
+			const spec = await pickers.ask(`  ${role} backend[:model][@effort]? (keep = unchanged; inherit = shared Solo)`, existing?.debate?.[role] ?? "keep");
+			if (spec.toLowerCase() !== "keep") {
+				debate[role] = spec.toLowerCase() === "inherit" ? null : spec;
+			}
+		}
+		chrome.answered("Debate", Object.entries(debate).map(([role, spec]) => `${role} ${spec ?? "shared Solo"}`).join(", ") || "unchanged");
+	}
+
+	return {
+		mode, soloSpec, council,
+		...(councilSynthesizer !== undefined ? { councilSynthesizer } : {}),
+		...(debate !== undefined ? { debate } : {}),
+	};
 }
 
 /**

@@ -18,6 +18,8 @@ export interface HttpBackendConfig {
 	type: "http";
 	provider: "anthropic" | "openai" | "google";
 	model: string;
+	/** Per-call deadline in milliseconds. */
+	timeoutMs?: number;
 	apiKeyEnv?: string;
 	baseUrl?: string;
 }
@@ -78,10 +80,11 @@ export async function callHttpAdvisor(
 
 	const model = backend.model || defaults.model;
 	const baseUrl = backend.baseUrl || defaults.baseUrl;
+	let timer: ReturnType<typeof setTimeout> | undefined;
 
 	try {
 		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		timer = setTimeout(() => controller.abort(), timeoutMs);
 
 		if (backend.provider === "anthropic") {
 			const response = await fetch(`${baseUrl}/v1/messages`, {
@@ -99,8 +102,6 @@ export async function callHttpAdvisor(
 				}),
 				signal: controller.signal,
 			});
-
-			clearTimeout(timer);
 
 			if (!response.ok) {
 				const body = await response.text();
@@ -124,5 +125,7 @@ export async function callHttpAdvisor(
 			return { ok: false, text: "", error: `${backend.provider} HTTP timed out after ${timeoutMs}ms` };
 		}
 		return { ok: false, text: "", error: `${backend.provider} HTTP failed: ${e instanceof Error ? e.message : String(e)}` };
+	} finally {
+		if (timer) clearTimeout(timer);
 	}
 }

@@ -22,6 +22,28 @@ describe("parseArgs", () => {
 		expect(args.question).toBe("Should I ship this?");
 	});
 
+	it("keeps a saved default mode unless --mode is explicit", () => {
+		expect(parseArgs(["Q"]).modeExplicit).toBe(false);
+		expect(parseArgs(["--mode", "solo", "Q"]).modeExplicit).toBe(true);
+	});
+
+	it("parses independent Council and Debate seat specs", () => {
+		const args = parseArgs(["--mode", "debate", "--advocate", "codex:gpt-5.6-sol@high",
+			"--critic", "claude:opus", "--synthesizer", "codex:judge", "Q"]);
+		expect([args.advocate, args.critic, args.synthesizer]).toEqual([
+			"codex:gpt-5.6-sol@high", "claude:opus", "codex:judge",
+		]);
+		expect(args.unknown).toEqual([]);
+	});
+
+	it("rejects a missing seat spec without consuming the next flag", () => {
+		const args = parseArgs(["--advocate", "--critic", "claude", "Q"]);
+		expect(args.unknown).toContain("--advocate (missing value)");
+		expect(args.critic).toBe("claude");
+		expect(args.question).toBe("Q");
+		expect(parseArgs(["--synthesizer", "", "Q"]).unknown).toContain("--synthesizer (missing value)");
+	});
+
 	it("parses --rounds and --timeout as numbers", () => {
 		const args = parseArgs(["--rounds", "3", "--timeout", "300000", "Q"]);
 		expect(args.rounds).toBe(3);

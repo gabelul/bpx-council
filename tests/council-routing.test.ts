@@ -52,6 +52,59 @@ describe("runCouncil backend routing", () => {
 		expect(commandsUsed().slice(0, 3)).toEqual(["codex", "claude", "opencode"]);
 	});
 
+	it("routes synthesis independently and labels its model", async () => {
+		const config = {
+			solo: { backend: { type: "cli", command: "codex", model: "shared" } },
+			council: { synthesizer: "claude:opus@high" },
+		} as never;
+		const result = await runCouncil({ question: "Q", config });
+		expect(commandsUsed()).toEqual(["codex", "codex", "codex", "claude"]);
+		expect(callAdvisor.mock.calls[3]?.[2]).toMatchObject({ command: "claude", model: "opus", effort: "high" });
+		expect(result.ok && result.text).toContain("### Verdict · claude:opus@high");
+	});
+
+	it("lets a CLI synthesis spec override config, with run-wide controls", async () => {
+		const config = {
+			...baseConfig, council: { synthesizer: "claude:opus" },
+		} as never;
+		await runCouncil({ question: "Q", config, synthesizer: "codex:judge", seatOptions: { timeoutMs: 4000, isolate: true } });
+		expect(callAdvisor.mock.calls[3]?.[2]).toMatchObject({
+			command: "codex", model: "judge", timeoutMs: 4000, isolate: true,
+		});
+	});
+
+	it("attaches images to explicit image-capable member and synthesis routes", async () => {
+		await runCouncil({ question: "Q", config: baseConfig,
+			backends: ["codex:architect", "claude:critic", "codex:simplifier"],
+			synthesizer: "anthropic:judge", seatOptions: { images: ["/tmp/layout.png"] } });
+		expect(callAdvisor.mock.calls[0]?.[2]).toMatchObject({ images: ["/tmp/layout.png"] });
+		expect(callAdvisor.mock.calls[1]?.[2]).not.toHaveProperty("images"); // Claude reads named path from prompt.
+		expect(callAdvisor.mock.calls[2]?.[2]).toMatchObject({ images: ["/tmp/layout.png"] });
+		expect(callAdvisor.mock.calls[3]?.[2]).toMatchObject({ images: ["/tmp/layout.png"] });
+	});
+
+	it("does not require image support from an unused shared backend", async () => {
+		const config = { solo: { backend: { type: "cli", command: "opencode" } } } as never;
+		await runCouncil({ question: "Q", config,
+			backends: ["codex", "claude", "codex"], synthesizer: "codex",
+			seatOptions: { images: ["/tmp/layout.png"] } });
+		expect(callAdvisor.mock.calls.map((call) => (call[2] as { command?: string }).command))
+			.toEqual(["codex", "claude", "codex", "codex"]);
+	});
+
+	it("rejects an image-blind member before calling any advisor", async () => {
+		await expect(runCouncil({ question: "Q", config: baseConfig,
+			backends: ["codex", "opencode", "codex"], seatOptions: { images: ["/tmp/layout.png"] } }))
+			.rejects.toThrow("can't take images");
+		expect(callAdvisor).not.toHaveBeenCalled();
+	});
+
+	it("rejects a malformed synthesis spec before asking any member", async () => {
+		await expect(runCouncil({ question: "Q", config: baseConfig, synthesizer: ":broken" }))
+			.rejects.toThrow("Invalid backend spec");
+		expect(callAdvisor).not.toHaveBeenCalled();
+	});
+
 	it("falls back to the default for personas beyond the supplied list", async () => {
 		await runCouncil({ question: "Q", config: baseConfig, backends: ["claude"] });
 
@@ -148,11 +201,12 @@ describe("runCouncil backend routing", () => {
 
 		const result = await runCouncil({ question: "Q", config: baseConfig });
 
-		expect(result.ok).toBe(true);
-		if (!result.ok) return;
-		expect(result.text).toContain("Ship it.");
-		expect(result.text).toContain("Absolutely not.");
-		expect(result.text).not.toContain("### Verdict");
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error).toContain("Synthesis failed");
+		expect(result.partial).toContain("Ship it.");
+		expect(result.partial).toContain("Absolutely not.");
+		expect(result.partial).not.toContain("### Verdict");
 	});
 
 	it("fails only when every member fails", async () => {

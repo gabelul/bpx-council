@@ -10,12 +10,19 @@
 
 import { execSync } from "node:child_process";
 import type { CliBackendConfig } from "./backend.js";
-import { CLI_BACKENDS, KNOWN_CLI_COMMANDS, unusableReason } from "./cli-registry.js";
+import { CLI_BACKENDS, KNOWN_CLI_COMMANDS, imageSupport, unusableReason } from "./cli-registry.js";
 import type { HttpBackendConfig } from "./http-backend.js";
 import type { PtyBackendConfig } from "./pty-backend.js";
 import { isTmuxAvailable } from "./pty-backend.js";
 
 export type DetectedBackend = CliBackendConfig | HttpBackendConfig | PtyBackendConfig;
+
+/** Run-wide controls applied to explicitly selected seat routes. */
+export interface SeatOptions {
+	timeoutMs?: number;
+	isolate?: boolean;
+	images?: string[];
+}
 
 export type BackendType = "cli" | "http" | "tmux";
 
@@ -85,10 +92,38 @@ export function parseBackendArg(arg: string): ExplicitBackend {
 }
 
 /**
- * A short label for a resolved backend, for display in council output.
- *
- * The whole point of running members on different models is being able to see
- * who said what, so this ends up in the member headers.
+ * Resolve an optional seat spec without carrying the shared model into it.
+ * @param spec - Seat's backend[:model][@effort] override, if set.
+ * @param shared - Resolved Solo fallback.
+ * @param options - Global timeout, isolation and image inputs for explicit routes.
+ * @returns The independent route, or shared backend when no override exists.
+ */
+export function resolveSeatBackend(
+	spec: string | null | undefined,
+	shared: DetectedBackend,
+	options: SeatOptions = {},
+): DetectedBackend {
+	let backend = shared;
+	if (spec != null) {
+		const trimmed = spec.trim();
+		if (!trimmed || !trimmed.split(/[:@]/, 1)[0]) throw new Error(`Invalid backend spec: ${JSON.stringify(spec)}`);
+		backend = detectBackend(parseBackendArg(trimmed));
+		if (options.timeoutMs) backend.timeoutMs = options.timeoutMs;
+		if (options.isolate && backend.type === "cli") backend.isolate = true;
+	}
+	if (options.images?.length) {
+		const name = backend.type === "http" ? backend.provider : backend.command;
+		const support = backend.type === "tmux" ? undefined : imageSupport(name);
+		if (!support) throw new Error(`${name} can't take images in this seat. Use codex, claude or anthropic.`);
+		if (support === "attach" && backend.type !== "tmux") backend.images = options.images;
+	}
+	return backend;
+}
+
+/**
+ * Label a backend with its selected model and effort for attributed output.
+ * @param backend - Resolved advisor route.
+ * @returns Human-readable backend:model@effort label.
  */
 export function backendLabel(backend: DetectedBackend): string {
 	if (backend.type === "http") return backend.model ?? backend.provider ?? "http";

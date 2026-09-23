@@ -9,7 +9,7 @@
 
 import { callAdvisor, type BackendConfig, type BackendResult } from "./backend.js";
 import { DEFAULT_PERSONAS, SYNTHESIZER_PROMPT, type Persona } from "./personas.js";
-import { backendLabel, detectBackend, parseBackendArg } from "./detect.js";
+import { backendLabel, resolveSeatBackend, type SeatOptions } from "./detect.js";
 import type { BpxCouncilConfig } from "./config.js";
 
 export interface CouncilInput {
@@ -21,6 +21,10 @@ export interface CouncilInput {
 	 * config. Fewer specs than personas is fine — the rest use the default.
 	 */
 	backends?: string[];
+	/** Verdict backend override; otherwise uses config, then the shared Solo backend. */
+	synthesizer?: string;
+	/** Run-wide controls for explicitly selected seat backends. */
+	seatOptions?: SeatOptions;
 }
 
 export interface CouncilMember {
@@ -34,7 +38,8 @@ export interface CouncilMember {
 
 export type CouncilResult =
 	| { ok: true; text: string; members: CouncilMember[] }
-	| { ok: false; error: string };
+	/** A failed synthesis keeps completed member verdicts as partial output. */
+	| { ok: false; error: string; partial?: string; members?: CouncilMember[] };
 
 /** Progress to stderr — see the same note in debate.ts. */
 function note(line: string): void {
@@ -64,10 +69,10 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 	// it, every persona was the same model wearing a different stance.
 	const assigned = personas.map((persona, i) => {
 		const spec = input.backends?.[i] ?? config.council?.backends?.[persona.name];
-		if (!spec) return { persona, backend, label: backendLabel(backend as never) };
-		const resolved = detectBackend(parseBackendArg(spec));
-		return { persona, backend: resolved as unknown as BackendConfig, label: backendLabel(resolved) };
+		const resolved = resolveSeatBackend(spec, backend, input.seatOptions);
+		return { persona, backend: resolved, label: backendLabel(resolved) };
 	});
+	const synthBackend = resolveSeatBackend(input.synthesizer ?? config.council?.synthesizer, backend, input.seatOptions);
 
 	const distinct = new Set(assigned.map((a) => a.label));
 	note(
@@ -113,19 +118,19 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 	const synthMessage = `${synthesisInput}\n\n=== Original Question ===\n${question}`;
 
 	// Synthesize — one more call that merges the verdicts.
-	note("── synthesizing verdict …");
-	const synthResult = await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, backend);
+	note(`── synthesizing verdict · ${backendLabel(synthBackend)} …`);
+	const synthResult = await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthBackend);
 	note("");
 
 	if (!synthResult.ok) {
-		// Synthesis failed — hand back the raw member verdicts so minutes of
-		// parallel work don't evaporate over the last call.
-		return { ok: true, text: transcript || "No usable output.", members };
+		// Preserve paid-for member answers, but don't claim a verdict was produced.
+		return { ok: false, error: `Synthesis failed (${backendLabel(synthBackend)}): ${synthResult.error}`,
+			partial: transcript, members };
 	}
 
 	// Return the members *and* the verdict. Collapsing to the synthesis hides
 	// the disagreement, which is the thing worth paying several models for.
-	return { ok: true, text: `${transcript}\n\n### Verdict\n${synthResult.text}`, members };
+	return { ok: true, text: `${transcript}\n\n### Verdict · ${backendLabel(synthBackend)}\n${synthResult.text}`, members };
 }
 
 async function callCouncilMember(
