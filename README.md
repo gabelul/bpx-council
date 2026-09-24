@@ -407,11 +407,11 @@ command or URL? Put it in your own global config or pass an explicit trusted
 `--config <path>`; either overrides/escapes project restrictions. Don't pass a
 repo-controlled file explicitly as a shortcut around this check.
 
-Upgrading from 1.8.0? A repo `.bpx-council.json` with CLI/tmux routes, custom
-URLs, or persona prompts that used to load will now fail validation. Move those
-choices to your global config or a trusted file passed with `--config`; keep the
-repo file within the Anthropic-only rules above. Run `bpx-council doctor` to
-check the resulting routes without paying for a call.
+Existing repo `.bpx-council.json` files with CLI/tmux routes, custom URLs, or
+persona prompts now fail validation. Move those choices to your global config
+or a trusted file passed with `--config`; keep the repo file within the
+Anthropic-only rules above. Configured image paths also fail; pass them with
+`--image`. Run `bpx-council doctor` to check routes without paying for a call.
 
 ## Wiring it into your agent
 
