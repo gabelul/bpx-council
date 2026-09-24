@@ -36,6 +36,10 @@ beforeEach(() => {
 	const executable = `#!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
+if (path.basename(process.argv[1]) === 'codex' && process.argv[2] === 'debug' && process.argv[3] === 'models') {
+  console.log(JSON.stringify({ models: [] }));
+  process.exit(0);
+}
 let prompt = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => { prompt += chunk; });
@@ -101,16 +105,16 @@ describe("consult CLI seat dispatch", () => {
 		expect(result.stdout).toContain("### Verdict · codex:judge");
 	});
 
-	it("delivers an image to each capable seat and names its path for Claude", () => {
+	it("delivers an image path to each Codex seat", () => {
 		const image = join(dir, "layout.png");
 		writeFileSync(image, PNG_1PX);
 		const result = invoke(["--mode", "debate", "--rounds", "1", "--image", image,
-			"--advocate", "codex:adv", "--critic", "claude:critic", "--synthesizer", "codex:judge", "Q"], {
+			"--advocate", "codex:adv", "--critic", "codex:critic", "--synthesizer", "codex:judge", "Q"], {
 			defaultMode: "solo", solo: { backend: { type: "cli", command: "codex" } },
 		});
 		expect(result.status).toBe(0);
 		expect(result.calls[0]?.args).toContain(image);
-		expect(result.calls[1]?.prompt).toContain(`Images to look at: ${image}`);
+		expect(result.calls[1]?.args).toContain(image);
 		expect(result.calls[2]?.args).toContain(image);
 	});
 
@@ -118,11 +122,22 @@ describe("consult CLI seat dispatch", () => {
 		const image = join(dir, "layout.png");
 		writeFileSync(image, PNG_1PX);
 		const result = invoke(["--mode", "debate", "--rounds", "1", "--image", image,
-			"--advocate", "codex", "--critic", "claude", "--synthesizer", "codex", "Q"], {
+			"--advocate", "codex", "--critic", "codex", "--synthesizer", "codex", "Q"], {
 			defaultMode: "solo", solo: { backend: { type: "cli", command: "opencode" } },
 		});
 		expect(result.status).toBe(0);
-		expect(result.calls.map((call) => call.command)).toEqual(["codex", "claude", "codex"]);
+		expect(result.calls.map((call) => call.command)).toEqual(["codex", "codex", "codex"]);
+	});
+
+	it("rejects Claude image input before spawning its no-tools preset", () => {
+		const image = join(dir, "claude-image.png");
+		writeFileSync(image, PNG_1PX);
+		const result = invoke(["--backend", "claude", "--image", image, "Q"], {
+			defaultMode: "solo", solo: { backend: { type: "cli", command: "codex" } },
+		});
+		expect(result.status).not.toBe(0);
+		expect(result.stderr).toContain("can't take images");
+		expect(result.calls).toEqual([]);
 	});
 
 	it("rejects an image-blind seat before spawning any advisor", () => {

@@ -10,8 +10,8 @@
  *
  * ## The one rule
  *
- * Two destinations are files the user already owns and may have edited by
- * hand: Claude Code's `settings.json` and the project's `AGENTS.md`. For those,
+ * Legacy hook merge support remains for later uninstall work. New installs
+ * only edit the project's `AGENTS.md` among user-owned files. For those,
  * **anything we don't recognise is a refusal, never a rewrite.** A settings
  * root that isn't an object, a `hooks.Stop` that isn't an array, an AGENTS.md
  * with a start marker and no end — every one of those returns a `failed`
@@ -23,18 +23,21 @@
  * block, ate the rest of their AGENTS.md on the second run. See
  * docs/dev-docs/troubleshooting.md.
  *
- * The skill and command files are different — those are ours, and a reinstall
- * replaces them. The plan output says `overwrite` when it's about to.
+ * Reinstall refreshes known files but refuses skill dirs with extra entries or
+ * symlinks. The plan shows drift instead of claiming those trees are current.
  */
 
 import {
 	accessSync,
 	chmodSync,
+	closeSync,
 	constants,
 	cpSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
+	mkdtempSync,
+	openSync,
 	readdirSync,
 	readFileSync,
 	realpathSync,
@@ -45,12 +48,14 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir, platform } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { AGENTS, findAgent, TEMPLATES_ROOT, type AgentDef, type InstallAction, type Scope } from "./agents.js";
 import { runMultiselect } from "./multiselect.js";
 import { printStarNudge } from "./nudge.js";
+import { inspectRetiredHook, verifyGroups } from "./lifecycle.js";
 import { bold, cyan, dim, green, red, yellow } from "./style.js";
 
 /** Markers that make the AGENTS.md block replaceable instead of duplicable. */
@@ -76,15 +81,17 @@ export function isPlatformJunk(path: string): boolean {
 }
 
 export interface InstallOptions {
-	/** Agent ids to install. Empty/undefined means ask (or use all detected with --yes). */
+	/** Agent ids to install. Empty/undefined means ask (or use detected hosts with --yes/--dry-run). */
 	agents?: string[];
 	scope?: Scope;
-	/** Include opt-in actions like the Stop hook. */
+	/** Deprecated flag retained for clear rejection and stable caller API. */
 	withHook?: boolean;
 	/** Skip prompts — take the defaults and write. */
 	yes?: boolean;
-	/** Show the plan, write nothing. */
+	/** Show the plan without prompts or writes. */
 	dryRun?: boolean;
+	/** Inspect installed artifacts only; no prompts, writes, or model calls. */
+	verify?: boolean;
 	/**
 	 * Symlink each agent's skill dir at one canonical copy instead of
 	 * duplicating it. Update once, every agent sees it. Opt-in, because
@@ -292,8 +299,8 @@ function segmentRunsCouncil(segment: string): boolean {
 /**
  * Insert or refresh our marker-delimited block in a Markdown file.
  *
- * Re-running replaces what's between the markers. Content outside them is
- * never touched.
+ * Re-running replaces only exact bundled current/legacy content between
+ * markers. Content outside them is never touched.
  *
  * Refuses on any malformed marker state — a start with no end after it, an end
  * with no start, or more than one block. Those are exactly the states where
@@ -339,8 +346,20 @@ export function applyBlock(existing: string, snippet: string): EditResult<string
 		return { ok: false, reason: "bpx-council:end appears before :start — repair by hand" };
 	}
 
+	if (!isBundledBlock(existing.slice(start, end + BLOCK_END.length))) {
+		return { ok: false, reason: "edited or unknown bpx-council block — repair by hand" };
+	}
 	const text = existing.slice(0, start) + block + existing.slice(end + BLOCK_END.length);
 	return { ok: true, value: text, changed: text !== existing };
+}
+
+/** Only exact bundled current/legacy blocks are ours to replace or remove.
+ * @param block - Existing marker-delimited block.
+ * @returns Whether installer owns these exact bytes.
+ */
+export function isBundledBlock(block: string): boolean {
+	return ["agents-md/AGENTS.md.snippet", "agents-md/AGENTS.md.legacy.snippet"]
+		.some((name) => block === readFileSync(join(TEMPLATES_ROOT, name), "utf8").trim());
 }
 
 /** How many times `needle` appears in `haystack`. */
@@ -365,25 +384,36 @@ export interface SkippedAgent {
  * Build the full action list for the chosen agents and scope.
  *
  * Agents that don't support the requested scope come back in `skipped` rather
- * than vanishing — naming codex and silently getting nothing was worse than
- * either installing or erroring.
+ * than vanishing. Duplicate skill destinations are planned only once.
  */
 export function planActions(
 	agents: AgentDef[],
 	scope: Scope,
 	cwd: string,
 	withHook: boolean,
+	dedupeSharedSkill = true,
 ): { plan: { agent: AgentDef; actions: InstallAction[] }[]; skipped: SkippedAgent[] } {
 	const plan: { agent: AgentDef; actions: InstallAction[] }[] = [];
 	const skipped: SkippedAgent[] = [];
 
-	for (const agent of agents) {
+	const destinations = new Set<string>();
+	const sharedSkill = agents.some((a) => a.id === "codex" || (scope === "project" && a.id === "agents-skills"));
+	const ordered = [...agents].sort((a, b) => Number(a.id === "agents-skills") - Number(b.id === "agents-skills"));
+	for (const agent of ordered) {
 		if (!agent.scopes.includes(scope)) {
 			const supported = agent.scopes.join(", ");
 			skipped.push({ agent, reason: `${supported}-only — re-run with --scope ${agent.scopes[0]}` });
 			continue;
 		}
-		const actions = agent.actions(scope, cwd).filter((a) => withHook || !a.optIn);
+		// OpenCode discovers .agents/skills at both scopes. Keep its command,
+		// but avoid a second skill when Codex or the shared option writes there.
+		const actions = agent.actions(scope, cwd).filter((a) => {
+			if (dedupeSharedSkill && sharedSkill && agent.id === "opencode" && a.kind === "copy-dir") return false;
+			if (a.optIn && !withHook) return false;
+			if (destinations.has(a.dest)) return false;
+			destinations.add(a.dest);
+			return true;
+		});
 		if (actions.length > 0) plan.push({ agent, actions });
 	}
 	return { plan, skipped };
@@ -401,7 +431,9 @@ export function planActions(
  * next run correctly refuses to merge, but by then the content is already
  * gone. Write beside it, then rename, which is atomic within a filesystem.
  */
-function writeFileAtomic(dest: string, text: string): void {
+export function writeFileAtomic(dest: string, text: string | Uint8Array, refuseSymlinks = false): void {
+	if (refuseSymlinks && pathEntryExists(dest) && !lstatSync(dest).isFile())
+		throw new Error("foreign link or wrong type — left untouched");
 	// Resolve symlinks first. Dotfiles setups routinely symlink settings.json
 	// and AGENTS.md into a tracked repo, and `rename` replaces the *directory
 	// entry* — so renaming onto the link would swap it for a regular file and
@@ -432,45 +464,56 @@ function writeFileAtomic(dest: string, text: string): void {
 		}
 	}
 
-	const tmp = `${target}.bpx-council-tmp`;
+	// Exclusive creation prevents a stale or user-owned sibling from being
+	// overwritten. New files start private; existing files keep their mode.
+	const tmp = `${target}.bpx-council-${randomUUID()}.tmp`;
+	const fd = openSync(tmp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
 	try {
-		writeFileSync(tmp, text);
-		// Carry the destination's permissions across. A fresh temp file gets
-		// 0666 & ~umask, so a deliberate `chmod 600` on a settings.json holding
-		// API keys would quietly come back world-readable after an install.
-		if (existsSync(target)) {
-			try {
-				chmodSync(tmp, statSync(target).mode);
-			} catch {
-				// Non-fatal: better to write with default perms than not at all.
-			}
-		}
+		try { writeFileSync(fd, text); }
+		finally { closeSync(fd); }
+		if (existsSync(target)) chmodSync(tmp, statSync(target).mode);
+		if (refuseSymlinks && pathEntryExists(dest) && !lstatSync(dest).isFile())
+			throw new Error("foreign link or wrong type — left untouched");
 		renameSync(tmp, target);
 	} catch (e) {
-		try {
-			if (existsSync(tmp)) unlinkSync(tmp);
-		} catch {
-			// Best-effort cleanup — the original write error is what matters.
-		}
+		try { unlinkSync(tmp); } catch { /* Best-effort cleanup of our own temp. */ }
 		throw e;
 	}
 }
 
-/** Does the destination tree differ from the template tree? */
-function treeDiffers(source: string, dest: string): boolean {
-	if (!existsSync(dest)) return true;
+/** Compare template and destination without following links or hiding extra entries. */
+export function treeDiffers(source: string, dest: string): boolean {
 	try {
-		if (statSync(source).isDirectory()) {
-			if (!statSync(dest).isDirectory()) return true;
+		const src = lstatSync(source);
+		const dst = lstatSync(dest);
+		if (src.isSymbolicLink() || dst.isSymbolicLink()) return true;
+		if (src.isDirectory()) {
+			if (!dst.isDirectory()) return true;
 			const names = readdirSync(source).filter((n) => !isPlatformJunk(n));
-			const destNames = readdirSync(dest).filter((n) => !isPlatformJunk(n));
+			const destNames = readdirSync(dest);
 			if (names.length !== destNames.length) return true;
-			return names.some((n) => treeDiffers(join(source, n), join(dest, n)));
+			return names.some((n) => !destNames.includes(n) || treeDiffers(join(source, n), join(dest, n)));
 		}
-		return readFileSync(source, "utf-8") !== readFileSync(dest, "utf-8");
+		return !src.isFile() || !dst.isFile() || !readFileSync(source).equals(readFileSync(dest));
 	} catch {
-		// Unreadable either side — treat as different so we don't claim a
-		// no-op we can't actually verify.
+		return true;
+	}
+}
+
+/** Refuse foreign entries or symlinks even when known files need refreshing. */
+function unsafeTree(source: string, dest: string): boolean {
+	try {
+		const src = lstatSync(source);
+		const dst = lstatSync(dest);
+		if (src.isSymbolicLink() || dst.isSymbolicLink()) return true;
+		if (src.isDirectory()) {
+			if (!dst.isDirectory()) return true;
+			const allowed = readdirSync(source).filter((n) => !isPlatformJunk(n));
+			return readdirSync(dest).some((n) => !allowed.includes(n)) ||
+				allowed.some((n) => pathEntryExists(join(dest, n)) && unsafeTree(join(source, n), join(dest, n)));
+		}
+		return !src.isFile() || !dst.isFile();
+	} catch {
 		return true;
 	}
 }
@@ -544,6 +587,9 @@ export function buildGroups(
 		for (const action of actions) {
 			if (isSkillCopy(action)) {
 				sawSkill = true;
+				// OpenCode discovers the canonical copy already; linking its native
+				// path as well creates two discoverable copies of the same skill.
+				if (agent.id === "opencode") continue;
 				if (action.dest === canonical) {
 					// This agent already targets the canonical dir — let it be the
 					// real copy, and don't emit a duplicate group for it.
@@ -592,11 +638,7 @@ export function buildGroups(
 function linkDir(canonical: string, dest: string): ActionResult {
 	const action: InstallAction = { kind: "link-dir", source: "skills/bpx-council", dest, linkTarget: canonical, label: "" };
 	try {
-		// Never link a path to itself. buildGroups already routes dest===canonical
-		// to a copy, so this is unreachable today — but this function is the one
-		// thing here that can rmSync a real directory, and treeDiffers(x, x) is
-		// false, so without this guard a self-link would delete the canonical
-		// copy and leave a dangling link. Refuse rather than trust the caller.
+		// Never replace the canonical directory with a link to itself.
 		if (dest === canonical) {
 			return { action, outcome: "unchanged", detail: "already the canonical copy" };
 		}
@@ -615,37 +657,96 @@ function linkDir(canonical: string, dest: string): ActionResult {
 						return { action, outcome: "unchanged", detail: "already linked" };
 					}
 				} catch {
-					// Dangling or unresolvable link — fall through and replace it.
+					// Foreign or dangling links aren't ours to replace.
 				}
-				rmSync(dest, { force: true });
+				return { action, outcome: "failed", detail: "foreign or dangling link — left untouched" };
 			} else if (treeDiffers(canonical, dest)) {
 				// A real dir whose contents differ from canonical is an edit we
 				// won't silently discard.
 				return { action, outcome: "failed", detail: "an edited copy is here — remove it or use copy mode" };
-			} else {
-				rmSync(dest, { recursive: true, force: true });
 			}
-		} catch {
-			// lstat threw → nothing at dest.
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 		}
 
-		const spec = symlinkSpec(canonical, dest);
-		try {
-			symlinkSync(spec.target, dest, spec.type);
-			return { action, outcome: existed ? "updated" : "created", detail: "symlink" };
-		} catch {
-			cpSync(canonical, dest, { recursive: true, filter: (s) => !isPlatformJunk(s) });
-			return { action, outcome: existed ? "updated" : "created", detail: "copied (symlinks unsupported here)" };
-		}
+		if (existed && treeDiffers(canonical, dest)) throw new Error("tree changed since inspection — left untouched");
+		const { copied, cleanupWarning } = replaceTree(canonical, dest, canonical);
+		return { action, outcome: existed ? "updated" : "created", detail: [copied ? "copied (symlinks unsupported here)" : "symlink", cleanupWarning].filter(Boolean).join("; ") };
 	} catch (e) {
 		return { action, outcome: "failed", detail: e instanceof Error ? e.message : String(e) };
 	}
 }
 
+/** Stage replacement beside destination, then swap with rollback on rename failure.
+ * @param source - Template or canonical tree to copy.
+ * @param dest - Skill directory to replace.
+ * @param linkTarget - Canonical path for link mode; omit for copy mode.
+ * @returns Link fallback and any cleanup warning after a completed swap.
+ */
+function replaceTree(source: string, dest: string, linkTarget?: string): { copied: boolean; cleanupWarning?: string } {
+	const stage = mkdtempSync(join(dirname(dest), ".bpx-council-stage-"));
+	const next = join(stage, "next");
+	const backup = join(stage, "previous");
+	let copied = false;
+	let moved = false;
+	let installed = false;
+	try {
+		if (linkTarget) {
+			const spec = symlinkSpec(linkTarget, dest);
+			try { symlinkSync(spec.target, next, spec.type); }
+			catch {
+				cpSync(source, next, { recursive: true, filter: (src) => !isPlatformJunk(src) });
+				copied = true;
+			}
+		} else cpSync(source, next, { recursive: true, filter: (src) => !isPlatformJunk(src) });
+		if (pathEntryExists(dest)) {
+			if (linkTarget ? treeDiffers(source, dest) : unsafeTree(source, dest))
+				throw new Error("tree changed since inspection — left untouched");
+			renameSync(dest, backup);
+			moved = true;
+		}
+		try { renameSync(next, dest); installed = true; }
+		catch (error) {
+			if (moved) {
+				try { renameSync(backup, dest); moved = false; }
+				catch (rollback) { throw new Error(`replacement failed; original retained at ${backup}: ${String(rollback)}`, { cause: error }); }
+			}
+			throw error;
+		}
+	} catch (error) {
+		// Cleanup must never turn a completed swap into a reported failure.
+		// For a failed rollback, the backup at stage is the only original.
+		if (!moved || installed) { try { rmSync(stage, { recursive: true, force: true }); } catch { /* Preserve original failure. */ } }
+		throw error;
+	}
+	let cleanupWarning: string | undefined;
+	try { rmSync(stage, { recursive: true, force: true }); }
+	catch (error) { cleanupWarning = `installed, but could not clean staging directory ${stage}: ${String(error)}`; }
+	return { copied, cleanupWarning };
+}
+
+/** Include dangling symlinks, which existsSync incorrectly calls absent. */
+export function pathEntryExists(dest: string): boolean {
+	try { lstatSync(dest); return true; } catch { return false; }
+}
+
+/** Include project artifacts when selecting hosts for offline lifecycle operations.
+ * @param scope - Scope being inspected.
+ * @param cwd - Project root.
+ * @returns Host definitions with detectable installs or existing artifacts.
+ */
+export function detectedHosts(scope: Scope, cwd: string): AgentDef[] {
+	return AGENTS.filter((agent) => agent.detect() || agent.scopes.includes(scope) && agent.actions(scope, cwd)
+		.some((action) => action.kind === "append-block"
+			? pathEntryExists(action.dest) && (() => { try { return readFileSync(action.dest, "utf8").includes(BLOCK_START); } catch { return false; } })()
+			: pathEntryExists(action.dest)));
+}
+
 /** What this action would do, without doing it. Drives the plan output. */
-export function previewAction(action: InstallAction): ActionPreview {
+export function previewAction(action: InstallAction, root = dirname(action.dest)): ActionPreview {
+	if (hasLinkedParent(action.dest, root) || (pathEntryExists(action.dest) && action.kind === "append-block" && lstatSync(action.dest).isSymbolicLink())) return "blocked";
 	if (action.kind === "link-dir") {
-		if (!existsSync(action.dest)) return "create";
+		if (!existsSync(action.dest)) return pathEntryExists(action.dest) ? "blocked" : "create";
 		try {
 			const st = lstatSync(action.dest);
 			if (st.isSymbolicLink()) {
@@ -654,28 +755,52 @@ export function previewAction(action: InstallAction): ActionPreview {
 				try {
 					if (realpathSync(action.dest) === realpathSync(action.linkTarget ?? "")) return "current";
 				} catch {
-					// Dangling link — will be replaced.
+					// Dangling link is foreign until proven otherwise.
 				}
-				return "overwrite";
+				return "blocked";
 			}
 			// A real dir is only swapped for a link when it matches canonical.
 			// An edited one is refused, so the plan must not promise overwrite.
-			if (action.linkTarget && treeDiffers(action.linkTarget, action.dest)) return "blocked";
+			if (action.linkTarget && treeDiffers(existsSync(action.linkTarget) ? action.linkTarget : join(TEMPLATES_ROOT, action.source), action.dest)) return "blocked";
 		} catch {
 			// Fall through to overwrite.
 		}
 		return "overwrite";
 	}
 	const source = join(TEMPLATES_ROOT, action.source);
-	if (!existsSync(action.dest)) return "create";
+	if (!existsSync(action.dest)) return pathEntryExists(action.dest) ? "blocked" : "create";
 	if (action.kind === "copy-dir" || action.kind === "copy-file") {
+		if (unsafeTree(source, action.dest)) return "blocked";
 		return treeDiffers(source, action.dest) ? "overwrite" : "current";
+	}
+	if (action.kind === "append-block") {
+		try {
+			const block = applyBlock(readFileSync(action.dest, "utf8"), readFileSync(source, "utf8"));
+			return block.ok ? (block.changed ? "merge" : "current") : "blocked";
+		} catch { return "blocked"; }
 	}
 	return "merge";
 }
 
+/** Refuse linked ancestors instead of writing through an unexpected host tree.
+ * @param dest - Planned destination.
+ * @returns Whether an ancestor below project or home root is symlinked.
+ */
+export function hasLinkedParent(dest: string, root: string): boolean {
+	try { if (lstatSync(root).isSymbolicLink()) return true; }
+	catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return true; }
+	for (let parent = dirname(dest); parent !== root && parent !== dirname(parent); parent = dirname(parent)) {
+		try { if (lstatSync(parent).isSymbolicLink()) return true; }
+		catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return true; }
+	}
+	return false;
+}
+
 /** Execute one action. Never throws; failures come back as an outcome. */
-export function applyAction(action: InstallAction): ActionResult {
+export function applyAction(action: InstallAction, root = dirname(action.dest)): ActionResult {
+	if (hasLinkedParent(action.dest, root)) return { action, outcome: "failed", detail: "symlinked parent directory — left untouched" };
+	if (action.kind === "append-block" && pathEntryExists(action.dest) && !lstatSync(action.dest).isFile())
+		return { action, outcome: "failed", detail: "AGENTS.md is not a regular file — left untouched" };
 	// Link actions point at the canonical copy, not a template, so they skip the
 	// template-existence check the copy/merge kinds start with.
 	if (action.kind === "link-dir") {
@@ -690,15 +815,17 @@ export function applyAction(action: InstallAction): ActionResult {
 
 		switch (action.kind) {
 			case "copy-dir": {
+				if (pathEntryExists(action.dest) && unsafeTree(source, action.dest)) return { action, outcome: "failed", detail: "extra entries, foreign link or wrong type — clean up manually" };
 				if (!treeDiffers(source, action.dest)) return { action, outcome: "unchanged" };
 				const existed = existsSync(action.dest);
-				cpSync(source, action.dest, { recursive: true, filter: (src) => !isPlatformJunk(src) });
-				return { action, outcome: existed ? "updated" : "created" };
+				const { cleanupWarning } = replaceTree(source, action.dest);
+				return { action, outcome: existed ? "updated" : "created", detail: cleanupWarning };
 			}
 			case "copy-file": {
+				if (pathEntryExists(action.dest) && unsafeTree(source, action.dest)) return { action, outcome: "failed", detail: "foreign link or wrong type — left untouched" };
 				if (!treeDiffers(source, action.dest)) return { action, outcome: "unchanged" };
 				const existed = existsSync(action.dest);
-				cpSync(source, action.dest);
+				writeFileAtomic(action.dest, readFileSync(source), true);
 				return { action, outcome: existed ? "updated" : "created" };
 			}
 			case "merge-json": {
@@ -755,25 +882,29 @@ function looksLikeProjectRoot(cwd: string): boolean {
  * @returns Process exit code — non-zero if any action failed.
  */
 export async function runInstall(opts: InstallOptions): Promise<number> {
+	if (opts.withHook) {
+		console.error("--with-hook is retired: the every-Stop paid consult is unsafe. No hook installed; use uninstall to remove exact legacy entry.");
+		return 1;
+	}
 	const cwd = opts.cwd ?? process.cwd();
-	const detected = AGENTS.filter((a) => a.detect());
+	if (opts.agents?.some((id) => !id.trim())) { console.error("--agent needs a nonblank agent id."); return 1; }
+	const detected = opts.verify ? detectedHosts(opts.scope ?? "project", cwd) : AGENTS.filter((a) => a.detect());
 	const isTty = process.stdin.isTTY === true;
 
 	// Writing without a terminal and without explicit consent is how a stray
 	// `install < /dev/null` from $HOME creates ~/AGENTS.md. --yes is the
 	// consent gate, so make it actually gate.
-	if (!isTty && !opts.yes && !opts.dryRun) {
+	if (!isTty && !opts.yes && !opts.dryRun && !opts.verify) {
 		console.error("bpx-council install: not a terminal, so there's nobody to confirm with.");
 		console.error("Re-run with --yes to write, or --dry-run to see the plan.");
 		return 1;
 	}
 
 	// Interactive only when we have a terminal and the user hasn't pre-answered.
-	const interactive = isTty && !opts.yes && !opts.agents?.length;
+	const interactive = isTty && !opts.yes && !opts.dryRun && !opts.verify && !opts.agents?.length;
 
 	let chosen: AgentDef[];
 	let scope: Scope;
-	let withHook = opts.withHook ?? false;
 	let link = opts.link ?? false;
 
 	if (opts.agents?.length) {
@@ -796,15 +927,18 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 		}
 		chosen = answers.agents;
 		scope = answers.scope;
-		withHook = answers.withHook;
 		link = answers.link;
 	} else {
-		// Headless with no --agent: everything we detected, project scope.
+		// Headless with no --agent: detected hosts only, project scope.
 		chosen = detected;
 		scope = opts.scope ?? "project";
 	}
 
-	const { plan, skipped } = planActions(chosen, scope, cwd, withHook);
+	const { plan, skipped } = planActions(chosen, scope, cwd, false);
+	if (scope === "global" && chosen.some((a) => a.id === "codex")) {
+		const oldSkill = join(homedir(), ".codex", "skills", "bpx-council");
+		if (existsSync(oldSkill)) console.error(yellow(`Legacy Codex skill at ${oldSkill} — not migrated or removed. Review it manually.`));
+	}
 
 	// Report what we're not doing before what we are.
 	for (const { agent, reason } of skipped) {
@@ -823,28 +957,40 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 	// One canonical copy + symlinks, or a copy per agent. Built once, so the
 	// plan the user sees is exactly what gets applied.
 	const groups = buildGroups(plan, scope, cwd, link);
+	if (!opts.verify && duplicateOpenCodeSkill(groups, scope, cwd)) {
+		console.error(red("OpenCode discovers both native and .agents skills here — remove one copy before installing; no files written."));
+		return 1;
+	}
+	if (chosen.some((agent) => agent.id === "claude-code")) {
+		const hook = inspectRetiredHook(scope, cwd);
+		if (hook) console.error(yellow(`Retired Claude Stop hook remains at ${hook} — paid calls may continue; run uninstall to remove exact legacy entry.`));
+	}
+	if (opts.verify) return verifyGroups(groups, scope, cwd, chosen.some((a) => a.id === "claude-code"), chosen.some((a) => a.id === "opencode"));
 
 	// Show the plan before touching anything.
 	const mode = link ? ` ${dim("·")} ${cyan("link mode")}` : "";
 	console.log(`\n${bold("Plan")}  ${dim(`${scope} scope`)}${mode}\n`);
 	let anyBlocked = false;
+	let canonicalBlocked = false;
+	const canonical = canonicalSkillDir(scope, cwd);
 	for (const { label, actions } of groups) {
 		console.log(`  ${bold(label)}`);
 		for (const a of actions) {
-			const preview = previewAction(a);
+			const preview = canonicalBlocked && a.kind === "link-dir" ? "blocked" : previewAction(a, scope === "global" ? homedir() : cwd);
+			if (a.dest === canonical && preview === "blocked") canonicalBlocked = true;
 			if (preview === "blocked") anyBlocked = true;
 			console.log(`    ${previewTag(preview)} ${dim(a.dest)}`);
 			console.log(`        ${dim(a.label)}`);
 		}
 	}
 	if (anyBlocked) {
-		console.log(`\n  ${yellow("[blocked]")} ${dim("= an edited copy is already there; it'll be left alone, not replaced.")}`);
+		console.log(`\n  ${yellow("[blocked]")} ${dim("= foreign entries, links, or edited copy; clean up manually.")}`);
 	}
 	console.log();
 
 	if (opts.dryRun) {
 		console.log(dim("Dry run — nothing written."));
-		return 0;
+		return anyBlocked ? 1 : 0;
 	}
 
 	if (interactive) {
@@ -857,9 +1003,13 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 	}
 
 	let failures = 0;
+	let canonicalFailed = false;
 	for (const { label, actions } of groups) {
 		for (const a of actions) {
-			const result = applyAction(a);
+			const result = canonicalFailed && a.kind === "link-dir"
+				? { action: a, outcome: "failed" as const, detail: "canonical copy failed — link not created" }
+				: applyAction(a, scope === "global" ? homedir() : cwd);
+			if (a.dest === canonical && result.outcome === "failed") canonicalFailed = true;
 			if (result.outcome === "failed") failures++;
 			const mark =
 				result.outcome === "failed" ? red("✗") : result.outcome === "unchanged" ? dim("·") : green("✓");
@@ -875,11 +1025,28 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 	}
 
 	console.log(`${green("✓")} ${bold("Done.")} ${dim("Restart your agent so it picks up the new files.")}`);
-	if (!withHook) {
-		console.log(dim(`  Tip: \`bpx-council install --with-hook\` gut-checks after every turn.`));
-	}
 	printStarNudge();
 	return 0;
+}
+
+/** Refuse duplicate skills discoverable from cwd before any action writes.
+ * OpenCode searches both project and global locations. Other projects aren't
+ * scanned: a global install can only account for the project in cwd.
+ * @param groups - Planned install actions.
+ * @param scope - Selected scope.
+ * @param cwd - Project root.
+ * @returns Whether native and shared skills would coexist for this project.
+ */
+function duplicateOpenCodeSkill(groups: ApplyGroup[], scope: Scope, cwd: string): boolean {
+	const projectBase = join(cwd, ".opencode");
+	const globalBase = join(homedir(), ".config", "opencode");
+	const native = [projectBase, globalBase].map((base) => join(base, "skills", "bpx-council"));
+	const shared = [canonicalSkillDir("project", cwd), canonicalSkillDir("global", cwd)];
+	const command = join(scope === "global" ? globalBase : projectBase, "commands", "council.md");
+	const targets = groups.flatMap((group) => group.actions.map((action) => action.dest));
+	if (![...native, ...shared, command].some((dest) => targets.includes(dest))) return false;
+	return native.some((dest) => pathEntryExists(dest) || targets.includes(dest)) &&
+		shared.some((dest) => pathEntryExists(dest) || targets.includes(dest));
 }
 
 /** A coloured `[create]`/`[overwrite]`/… tag for the plan. */
@@ -901,7 +1068,6 @@ function previewTag(preview: ActionPreview): string {
 interface WizardAnswers {
 	agents: AgentDef[];
 	scope: Scope;
-	withHook: boolean;
 	link: boolean;
 }
 
@@ -927,10 +1093,6 @@ async function promptWizard(detected: AgentDef[]): Promise<WizardAnswers | undef
 			scope = answer.trim() === "2" ? "global" : "project";
 		}
 
-		const withHook = agents.some((a) => a.id === "claude-code")
-			? await confirmOn(rl, "\nAdd the Stop hook? Gut-checks after every turn — costs a model call each time.", false)
-			: false;
-
 		// Only worth asking when more than one skill dir would be written —
 		// linking is about sharing one copy across several. A single skill dir
 		// has nothing to share, so don't clutter the flow.
@@ -944,7 +1106,7 @@ async function promptWizard(detected: AgentDef[]): Promise<WizardAnswers | undef
 					)
 				: false;
 
-		return { agents, scope, withHook, link };
+		return { agents, scope, link };
 	} finally {
 		rl.close();
 	}

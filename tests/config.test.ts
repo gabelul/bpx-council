@@ -96,6 +96,12 @@ describe("projectConfigPath / resolveConfig discovery", () => {
 		expect(projectConfigPath(dir)).toBeUndefined();
 	});
 
+	it("refuses configured image paths instead of silently sending unvalidated bytes", () => {
+		const path = join(home, ".bpx-council.json");
+		writeFileSync(path, JSON.stringify({ solo: { backend: { type: "http", provider: "anthropic", images: ["photo.png"] } } }));
+		expect(() => resolveConfig(undefined, dir)).toThrow(/solo\.backend\.images.*--image/);
+	});
+
 	it("layers a project config over the global one", () => {
 		// global: council mode
 		writeFileSync(join(home, ".bpx-council.json"), JSON.stringify({ defaultMode: "council" }));
@@ -118,11 +124,11 @@ describe("projectConfigPath / resolveConfig discovery", () => {
 		}));
 		mkdirSync(join(dir, ".git"));
 		writeFileSync(join(dir, ".bpx-council.json"), JSON.stringify({
-			council: { synthesizer: null }, debate: { critic: "opencode:critic" },
+			council: { synthesizer: null }, debate: { critic: "anthropic:critic" },
 		}));
 		const cfg = resolveConfig(undefined, dir);
 		expect(cfg.council).toEqual({ backends: { architect: "codex" }, synthesizer: null });
-		expect(cfg.debate).toEqual({ advocate: "codex:adv", critic: "opencode:critic" });
+		expect(cfg.debate).toEqual({ advocate: "codex:adv", critic: "anthropic:critic" });
 	});
 
 	it("an explicit --config path replaces discovery", () => {

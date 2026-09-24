@@ -36,6 +36,7 @@
     "templates/",
     "scripts/postinstall.mjs",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {

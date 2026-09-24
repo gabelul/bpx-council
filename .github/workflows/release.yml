@@ -31,10 +31,10 @@ jobs:
       - id: release
         uses: googleapis/release-please-action@v4
         with:
+          # Explicit release-type discovers the latest published tag; the
+          # repository's manifest/config files are not inputs on this path.
           release-type: node
-          package-name: bpx-council
           include-component-in-tag: false
-          bump-minor-pre-major: true
 
   publish:
     name: Publish to npm

@@ -68,13 +68,9 @@ export interface CliBackendSpec {
 	 * How this backend takes images.
 	 *
 	 *  - `"attach"`  the CLI has an image flag; runArgs places the paths.
-	 *  - `"read"`    no flag, but the agent will open a path given in the prompt.
-	 *                Weaker: it depends on the tool's own file access, and if it
-	 *                declines you get a confident answer about an unseen image.
-	 *
-	 * Omitted means no image support — better a clear error than a silent drop.
+	 * Omitted means no verified direct image transport.
 	 */
-	images?: "attach" | "read";
+	images?: "attach";
 	/**
 	 * How this backend can be cut off from the project's agent instructions.
 	 *
@@ -96,8 +92,8 @@ export interface CliBackendSpec {
 	 * ANTHROPIC_API_KEY and never reads OAuth — which breaks the no-API-key setup
 	 * this tool is built around, so it isn't worth it as a default.
 	 *
-	 * Omitted means the backend either doesn't read project instructions (crush
-	 * doesn't) or gives us no way to stop it.
+	 * Omitted means no verified isolation guarantee; do not assume it ignores
+	 * project instructions.
 	 */
 	isolation?: "config" | "system-prompt";
 	/**
@@ -179,6 +175,7 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		isolation: "config",
 		runArgs: ({ model: m, effort: e, images = [], isolate }) => [
 			"exec",
+			"--json",
 			// project_doc_max_bytes=0 stops codex loading AGENTS.md for this call.
 			...(isolate ? ["-c", "project_doc_max_bytes=0"] : []),
 			// -i is repeatable; codex attaches each to the initial prompt.
@@ -208,16 +205,12 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		runArgs: ({ model: m, effort: e, isolate, systemPrompt }) => [
 			...(m ? ["--model", m] : []),
 			...(e ? ["--effort", e] : []),
-			// Replacing the system prompt drops the default one that injects
-			// CLAUDE.md. Tools survive it — image-by-path still works.
+			// System prompt isolation does not disable tools. Disable them separately.
 			...(isolate && systemPrompt ? ["--system-prompt", systemPrompt] : []),
+			"--tools", "",
 			"-p",
 		],
 		effort: { levels: ["low", "medium", "high", "xhigh", "max"] },
-		// No image flag — claude opens a path mentioned in the prompt with its own
-		// Read tool. Verified working, but it's the agent fetching the file, not us
-		// handing it over.
-		images: "read",
 	},
 
 	// --- Wired per --help, round-trip UNVERIFIED (confirm before advertising) ---
@@ -226,8 +219,8 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		label: "OpenCode",
 		prompt: "stdin",
 		jsonl: true,
-		// opencode run [--model M]   (message on stdin).
-		runArgs: ({ model: m }) => ["run", ...(m ? ["--model", m] : [])],
+		// Its subprocess-only advisor agent denies all tools and preserves provider config.
+		runArgs: ({ model: m }) => ["run", "--format", "json", "--pure", "--agent", "bpx-council", ...(m ? ["--model", m] : [])],
 		list: { args: ["models"], parse: parseLineList },
 	},
 	"cursor-agent": {
@@ -283,7 +276,7 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 	},
 };
 
-/** The known CLI command names, in detection priority order (codex stays the default). */
+/** Known CLI names, offered as explicit trusted choices in the wizard. */
 export const KNOWN_CLI_COMMANDS = Object.keys(CLI_BACKENDS);
 
 /**
@@ -292,7 +285,7 @@ export const KNOWN_CLI_COMMANDS = Object.keys(CLI_BACKENDS);
  * anthropic isn't a CLI, but it does take images over HTTP as base64 blocks, so
  * it answers here too — callers only care whether images are possible and how.
  */
-export function imageSupport(name: string): "attach" | "read" | undefined {
+export function imageSupport(name: string): "attach" | undefined {
 	if (name === "anthropic") return "attach";
 	return CLI_BACKENDS[name]?.images;
 }

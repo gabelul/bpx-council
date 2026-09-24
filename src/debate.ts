@@ -7,10 +7,11 @@
  * sides for genuinely contentious calls.
  */
 
-import { callAdvisor, type BackendConfig } from "./backend.js";
-import { backendLabel, resolveSeatBackend, type SeatOptions } from "./detect.js";
+import { advisorTransportError, callAdvisor, type BackendConfig } from "./backend.js";
+import { backendLabel, resolveSeatBackend, textOnlyImageWarning, type SeatOptions } from "./detect.js";
 import { SYNTHESIZER_PROMPT } from "./personas.js";
 import type { BpxCouncilConfig } from "./config.js";
+import { seatAttempt, type PlannedSeat, type SeatAttempt } from "./receipt.js";
 
 export interface DebateInput {
 	question: string;
@@ -22,6 +23,8 @@ export interface DebateInput {
 	critic?: string;
 	synthesizer?: string;
 	seatOptions?: SeatOptions;
+	onAttempt?: (attempt: SeatAttempt) => void;
+	onPlan?: (seats: PlannedSeat[]) => void;
 }
 
 export type DebateResult =
@@ -62,6 +65,19 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 	const advocate = resolveSeatBackend(input.advocate ?? config.debate?.advocate, backend, input.seatOptions);
 	const critic = resolveSeatBackend(input.critic ?? config.debate?.critic, backend, input.seatOptions);
 	const synthesizer = resolveSeatBackend(input.synthesizer ?? config.debate?.synthesizer, backend, input.seatOptions);
+	// Check all routes once, before a sequential round can spend its first call.
+	const routes = [advocate, critic, synthesizer];
+	for (const route of routes) {
+		const error = advisorTransportError(route);
+		if (error) throw new Error(error);
+	}
+	for (const route of new Map(routes.map((item) => [backendLabel(item), item])).values()) {
+		const warning = textOnlyImageWarning(route);
+		if (warning) note(warning);
+	}
+	input.onPlan?.([...Array.from({ length: rounds }, (_, index) => [
+		{ seat: "advocate", round: index + 1 }, { seat: "critic", round: index + 1 },
+	]).flat(), { seat: "synthesizer", round: null }]);
 
 	const baseMessage = context
 		? `=== Context ===\n${context}\n\n=== Question ===\n${question}`
@@ -105,6 +121,7 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 
 		note(`── round ${round + 1}/${rounds}: advocate · ${backendLabel(advocate)} …`);
 		const advocateResult = await callAdvisor(ADVOCATE_PROMPT, advocateMsg, advocate);
+		input.onAttempt?.(seatAttempt("advocate", round + 1, advocate, advocateResult));
 		if (!advocateResult.ok) return bail(`Advocate failed (round ${round + 1}): ${advocateResult.error}`);
 		const advocateTurn = `### Advocate (round ${round + 1}) · ${backendLabel(advocate)}\n${advocateResult.text}`;
 		transcript += `\n\n${advocateTurn}`;
@@ -115,6 +132,7 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 
 		note(`── round ${round + 1}/${rounds}: critic · ${backendLabel(critic)} …`);
 		const criticResult = await callAdvisor(CRITIC_PROMPT, criticMsg, critic);
+		input.onAttempt?.(seatAttempt("critic", round + 1, critic, criticResult));
 		if (!criticResult.ok) return bail(`Critic failed (round ${round + 1}): ${criticResult.error}`);
 		const criticTurn = `### Critic (round ${round + 1}) · ${backendLabel(critic)}\n${criticResult.text}`;
 		transcript += `\n\n${criticTurn}`;
@@ -125,6 +143,7 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 	note(`── synthesizing verdict · ${backendLabel(synthesizer)} …`);
 	const synthMessage = `${transcript}\n\n=== Original Question ===\n${question}`;
 	const synthResult = await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthesizer);
+	input.onAttempt?.(seatAttempt("synthesizer", null, synthesizer, synthResult));
 	if (!synthResult.ok) return bail(`Synthesis failed: ${synthResult.error}`);
 
 	note("");

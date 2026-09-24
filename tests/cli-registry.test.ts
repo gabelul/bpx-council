@@ -15,9 +15,10 @@ describe("runArgs — per-tool invocation", () => {
 	it("codex: model after exec, prompt on stdin", () => {
 		const s = CLI_BACKENDS.codex;
 		expect(s.prompt).toBe("stdin");
-		expect(s.runArgs({})).toEqual(["exec", "--sandbox", "read-only", "--skip-git-repo-check", "-"]);
+		expect(s.runArgs({})).toEqual(["exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check", "-"]);
 		expect(s.runArgs({ model: "gpt-5-codex" })).toEqual([
 			"exec",
+			"--json",
 			"--model",
 			"gpt-5-codex",
 			"--sandbox",
@@ -29,12 +30,12 @@ describe("runArgs — per-tool invocation", () => {
 
 	it("claude: model before -p, prompt on stdin", () => {
 		expect(CLI_BACKENDS.claude.prompt).toBe("stdin");
-		expect(CLI_BACKENDS.claude.runArgs({ model: "claude-opus-4-8" })).toEqual(["--model", "claude-opus-4-8", "-p"]);
+		expect(CLI_BACKENDS.claude.runArgs({ model: "claude-opus-4-8" })).toEqual(["--model", "claude-opus-4-8", "--tools", "", "-p"]);
 	});
 
 	it("opencode: model after run, prompt on stdin", () => {
 		expect(CLI_BACKENDS.opencode.runArgs({ model: "anthropic/claude-opus-4-8" })).toEqual([
-			"run",
+			"run", "--format", "json", "--pure", "--agent", "bpx-council",
 			"--model",
 			"anthropic/claude-opus-4-8",
 		]);
@@ -105,7 +106,7 @@ describe("parseLineList", () => {
 describe("isolation from project instructions", () => {
 	it("codex suppresses the project doc with a config override", () => {
 		const args = CLI_BACKENDS.codex.runArgs({ isolate: true });
-		expect(args.slice(0, 3)).toEqual(["exec", "-c", "project_doc_max_bytes=0"]);
+		expect(args.slice(0, 4)).toEqual(["exec", "--json", "-c", "project_doc_max_bytes=0"]);
 	});
 
 	it("codex passes nothing extra when not isolating", () => {
@@ -114,11 +115,11 @@ describe("isolation from project instructions", () => {
 
 	it("claude takes the persona as a real system prompt when isolating", () => {
 		const args = CLI_BACKENDS.claude.runArgs({ isolate: true, systemPrompt: "You are a critic." });
-		expect(args).toEqual(["--system-prompt", "You are a critic.", "-p"]);
+		expect(args).toEqual(["--system-prompt", "You are a critic.", "--tools", "", "-p"]);
 	});
 
 	it("claude keeps its plain form when not isolating", () => {
-		expect(CLI_BACKENDS.claude.runArgs({ systemPrompt: "You are a critic." })).toEqual(["-p"]);
+		expect(CLI_BACKENDS.claude.runArgs({ systemPrompt: "You are a critic." })).toEqual(["--tools", "", "-p"]);
 	});
 
 	it("only the backends that actually read project files declare isolation", () => {

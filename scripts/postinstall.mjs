@@ -27,7 +27,7 @@ try {
 	if (process.env.npm_config_global === "true") {
 		process.stdout.write(
 			"\n  bpx-council installed.\n" +
-				"  Wire it into your coding agents (Claude Code, Codex, Cursor, …):\n\n" +
+				"  Wire it into Claude Code, Codex, or OpenCode:\n\n" +
 				"    bpx-council install\n\n",
 		);
 	}

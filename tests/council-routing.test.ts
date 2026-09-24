@@ -11,7 +11,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const callAdvisor = vi.fn();
-vi.mock("../src/backend.js", () => ({
+vi.mock("../src/backend.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../src/backend.js")>()),
 	callAdvisor: (...args: unknown[]) => callAdvisor(...args),
 }));
 
@@ -74,28 +75,92 @@ describe("runCouncil backend routing", () => {
 	});
 
 	it("attaches images to explicit image-capable member and synthesis routes", async () => {
-		await runCouncil({ question: "Q", config: baseConfig,
-			backends: ["codex:architect", "claude:critic", "codex:simplifier"],
-			synthesizer: "anthropic:judge", seatOptions: { images: ["/tmp/layout.png"] } });
-		expect(callAdvisor.mock.calls[0]?.[2]).toMatchObject({ images: ["/tmp/layout.png"] });
-		expect(callAdvisor.mock.calls[1]?.[2]).not.toHaveProperty("images"); // Claude reads named path from prompt.
-		expect(callAdvisor.mock.calls[2]?.[2]).toMatchObject({ images: ["/tmp/layout.png"] });
-		expect(callAdvisor.mock.calls[3]?.[2]).toMatchObject({ images: ["/tmp/layout.png"] });
+		const original = process.env.ANTHROPIC_API_KEY;
+		process.env.ANTHROPIC_API_KEY = "test-only";
+		try {
+			await runCouncil({ question: "Q", config: baseConfig,
+				backends: ["codex:architect", "anthropic:critic", "codex:simplifier"],
+				synthesizer: "anthropic:judge", seatOptions: {
+					images: ["/tmp/layout.png"],
+					imageData: [{ path: "/tmp/layout.png", mime: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==" }],
+				} });
+			expect(callAdvisor.mock.calls[0]?.[2]).toMatchObject({ images: ["/tmp/layout.png"] });
+			expect(callAdvisor.mock.calls[1]?.[2]).toMatchObject({ images: ["/tmp/layout.png"] });
+			expect(callAdvisor.mock.calls[2]?.[2]).toMatchObject({ images: ["/tmp/layout.png"] });
+			expect(callAdvisor.mock.calls[3]?.[2]).toMatchObject({ images: ["/tmp/layout.png"] });
+		} finally {
+			if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
+			else process.env.ANTHROPIC_API_KEY = original;
+		}
 	});
 
 	it("does not require image support from an unused shared backend", async () => {
 		const config = { solo: { backend: { type: "cli", command: "opencode" } } } as never;
 		await runCouncil({ question: "Q", config,
-			backends: ["codex", "claude", "codex"], synthesizer: "codex",
+			backends: ["codex", "codex", "codex"], synthesizer: "codex",
 			seatOptions: { images: ["/tmp/layout.png"] } });
 		expect(callAdvisor.mock.calls.map((call) => (call[2] as { command?: string }).command))
-			.toEqual(["codex", "claude", "codex", "codex"]);
+			.toEqual(["codex", "codex", "codex", "codex"]);
 	});
 
 	it("rejects an image-blind member before calling any advisor", async () => {
 		await expect(runCouncil({ question: "Q", config: baseConfig,
 			backends: ["codex", "opencode", "codex"], seatOptions: { images: ["/tmp/layout.png"] } }))
 			.rejects.toThrow("can't take images");
+		expect(callAdvisor).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ backends: ["codex", "codex"], synthesizer: "codex", seat: "member" },
+		{ backends: ["codex", "codex", "codex"], seat: "synthesizer" },
+	])("rejects image/custom-argv in a late $seat before any call", async ({ backends, synthesizer }) => {
+		const config = { solo: { backend: {
+			type: "cli", command: "codex", args: ["exec", "--json", "-"],
+		} } } as never;
+		await expect(runCouncil({ question: "Q", config, backends, synthesizer,
+			seatOptions: { images: ["/tmp/layout.png"] } }))
+			.rejects.toThrow("custom CLI args cannot safely attach images");
+		expect(callAdvisor).not.toHaveBeenCalled();
+	});
+
+	it("rejects missing frozen HTTP images before any member call", async () => {
+		await expect(runCouncil({ question: "Q", config: baseConfig,
+			backends: ["codex", "codex", "codex"], synthesizer: "anthropic",
+			seatOptions: { images: ["/tmp/layout.png"] } }))
+			.rejects.toThrow("Images must be validated and frozen");
+		expect(callAdvisor).not.toHaveBeenCalled();
+	});
+
+	it.each(["openai", "google"])("rejects unsupported HTTP %s in late seat before calls", async (provider) => {
+		await expect(runCouncil({ question: "Q", config: baseConfig, synthesizer: provider }))
+			.rejects.toThrow(`HTTP backend for ${provider} not yet implemented`);
+		expect(callAdvisor).not.toHaveBeenCalled();
+	});
+
+	it("rejects an unkeyed Anthropic synthesizer before asking any member", async () => {
+		const original = process.env.ANTHROPIC_API_KEY;
+		delete process.env.ANTHROPIC_API_KEY;
+		try {
+			await expect(runCouncil({ question: "Q", config: baseConfig, synthesizer: "anthropic" }))
+				.rejects.toThrow("No API key found in $ANTHROPIC_API_KEY");
+			expect(callAdvisor).not.toHaveBeenCalled();
+		} finally {
+			if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
+			else process.env.ANTHROPIC_API_KEY = original;
+		}
+	});
+
+	it("rejects mispaired HTTP payload in late seat before member calls", async () => {
+		await expect(runCouncil({ question: "Q", config: baseConfig,
+			backends: ["codex", "codex", "codex"], synthesizer: "anthropic",
+			seatOptions: { images: ["/tmp/layout.png"], imageData: [{ path: "/tmp/other.png", mime: "image/png", data: "iVBORw0KGgo=" }] } }))
+			.rejects.toThrow("Images must be validated and frozen");
+		expect(callAdvisor).not.toHaveBeenCalled();
+	});
+
+	it("rejects an unusable synthesizer before asking any member", async () => {
+		await expect(runCouncil({ question: "Q", config: baseConfig, synthesizer: "amp" }))
+			.rejects.toThrow("can't be used as an advisor");
 		expect(callAdvisor).not.toHaveBeenCalled();
 	});
 

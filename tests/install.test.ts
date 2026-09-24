@@ -8,6 +8,7 @@
  * refuse rather than guess when the file is unparseable.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
 	applyBlock,
@@ -20,7 +21,8 @@ import {
 	planActions,
 	symlinkSpec,
 } from "../src/install.js";
-import { AGENTS, findAgent } from "../src/agents.js";
+import { AGENTS, findAgent, TEMPLATES_ROOT } from "../src/agents.js";
+import { join } from "node:path";
 
 const HOOK_TEMPLATE = {
 	hooks: {
@@ -174,7 +176,8 @@ describe("isCouncilCommand", () => {
 });
 
 describe("applyBlock", () => {
-	const snippet = "<!-- bpx-council:start -->\n## bpx-council\n\nUse it.\n<!-- bpx-council:end -->";
+	const snippet = readFileSync(join(TEMPLATES_ROOT, "agents-md/AGENTS.md.snippet"), "utf8").trim();
+	const legacy = readFileSync(join(TEMPLATES_ROOT, "agents-md/AGENTS.md.legacy.snippet"), "utf8").trim();
 
 	it("appends to an empty file without leading blank lines", () => {
 		const { value, changed } = expectOk(applyBlock("", snippet));
@@ -189,19 +192,27 @@ describe("applyBlock", () => {
 
 	it("replaces in place on re-run instead of stacking duplicates", () => {
 		const once = expectOk(applyBlock("# Project\n", snippet)).value;
-		const updated = snippet.replace("Use it.", "Use it wisely.");
-		const twice = expectOk(applyBlock(once, updated)).value;
+		const twice = expectOk(applyBlock(once, snippet)).value;
 		expect(twice.match(/bpx-council:start/g)).toHaveLength(1);
-		expect(twice).toContain("Use it wisely.");
-		expect(twice).not.toContain("Use it.\n<!-- bpx-council:end -->");
+		expect(twice).toBe(once);
 	});
 
 	it("preserves content on both sides of the block", () => {
-		const existing = `# Top\n\n${snippet}\n\n## Bottom section\n\nKeep me.\n`;
-		const { value } = expectOk(applyBlock(existing, snippet.replace("Use it.", "Changed.")));
+		const existing = `# Top\n\n${legacy}\n\n## Bottom section\n\nKeep me.\n`;
+		const { value } = expectOk(applyBlock(existing, snippet));
 		expect(value).toContain("# Top");
 		expect(value).toContain("Keep me.");
-		expect(value).toContain("Changed.");
+		expect(value).toContain("Ask a narrow question.");
+		expect(value).not.toContain("second opinions");
+	});
+
+	it("refuses edited and unfamiliar single blocks", () => {
+		for (const block of [snippet.replace("Ask a narrow question.", "Send everything."), "<!-- bpx-council:start -->\nUnknown\n<!-- bpx-council:end -->"]) {
+			const original = `# Keep\n\n${block}\n`;
+			const result = applyBlock(original, snippet);
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.reason).toContain("edited or unknown");
+		}
 	});
 
 	it("reports no change when the block is already current", () => {
@@ -283,36 +294,27 @@ describe("applyBlock", () => {
 describe("planActions", () => {
 	const cwd = "/tmp/project";
 
-	it("omits opt-in actions unless asked", () => {
-		const claude = findAgent("claude-code");
-		expect(claude).toBeDefined();
-		const without = planActions([claude!], "project", cwd, false);
-		const withHook = planActions([claude!], "project", cwd, true);
-		expect(without.plan[0].actions).toHaveLength(2);
-		expect(withHook.plan[0].actions).toHaveLength(3);
-		expect(JSON.stringify(without.plan)).not.toContain("settings.json");
+	it("does not plan a paid Stop hook even when legacy caller passes true", () => {
+		const claude = findAgent("claude-code")!;
+		expect(planActions([claude], "project", cwd, false).plan[0].actions).toHaveLength(2);
+		expect(planActions([claude], "project", cwd, true).plan[0].actions).toHaveLength(2);
+		expect(JSON.stringify(planActions([claude], "project", cwd, true))).not.toContain("settings.json");
 	});
 
-	it("reports scope-incompatible agents instead of dropping them silently", () => {
-		// Codex reads skills only from ~/.codex. Naming it explicitly and
-		// getting nothing — no plan entry, no message, exit 0 — read as success.
+	it("supports Codex project and global skill paths", () => {
 		const codex = findAgent("codex")!;
-		const atProject = planActions([codex], "project", cwd, false);
-		expect(atProject.plan).toHaveLength(0);
-		expect(atProject.skipped).toHaveLength(1);
-		expect(atProject.skipped[0].reason).toContain("global");
-
-		const atGlobal = planActions([codex], "global", cwd, false);
-		expect(atGlobal.plan).toHaveLength(1);
-		expect(atGlobal.skipped).toHaveLength(0);
+		expect(planActions([codex], "project", cwd, false).plan[0].actions[0].dest)
+			.toBe(`${cwd}/.agents/skills/bpx-council`);
+		expect(planActions([codex], "global", cwd, false).plan[0].actions[0].dest)
+			.toMatch(/\/\.agents\/skills\/bpx-council$/);
 	});
 
-	it("still reports the skip when mixed with an agent that does install", () => {
+	it("keeps Codex and Claude project destinations distinct", () => {
 		const codex = findAgent("codex")!;
 		const claude = findAgent("claude-code")!;
 		const { plan, skipped } = planActions([codex, claude], "project", cwd, false);
-		expect(plan).toHaveLength(1);
-		expect(skipped.map((s) => s.agent.id)).toEqual(["codex"]);
+		expect(plan).toHaveLength(2);
+		expect(skipped).toHaveLength(0);
 	});
 
 	it("writes project-scoped Claude Code files under the project, not home", () => {
@@ -329,8 +331,10 @@ describe("planActions", () => {
 		const claudeSkill = findAgent("claude-code")!.actions("global", cwd).find((a) => a.kind === "copy-dir");
 		const codexSkill = findAgent("codex")!.actions("global", cwd)[0];
 		const sharedSkill = findAgent("agents-skills")!.actions("project", cwd)[0];
+		const opencodeSkill = findAgent("opencode")!.actions("project", cwd)[0];
 		expect(claudeSkill?.source).toBe(codexSkill.source);
 		expect(sharedSkill.source).toBe(codexSkill.source);
+		expect(opencodeSkill.source).toBe(codexSkill.source);
 	});
 
 	it("writes the shared skill to .agents/skills at project scope only", () => {
@@ -340,6 +344,45 @@ describe("planActions", () => {
 		expect(plan[0].actions[0].dest).toBe(`${cwd}/.agents/skills/bpx-council`);
 		// No global variant — the per-agent global dirs are fragmented.
 		expect(planActions([shared], "global", cwd, false).skipped).toHaveLength(1);
+	});
+
+	it("deduplicates shared and Codex skills regardless of selection order", () => {
+		for (const agents of [
+			[findAgent("agents-skills")!, findAgent("codex")!],
+			[findAgent("codex")!, findAgent("agents-skills")!],
+		]) {
+			const actions = planActions(agents, "project", cwd, false).plan.flatMap((p) => p.actions);
+			expect(actions.filter((a) => a.dest === `${cwd}/.agents/skills/bpx-council`)).toHaveLength(1);
+		}
+	});
+
+	it("avoids duplicate OpenCode discovery when a project .agents skill is also selected", () => {
+		const opencode = findAgent("opencode")!;
+		for (const other of [findAgent("codex")!, findAgent("agents-skills")!]) {
+			for (const agents of [[opencode, other], [other, opencode]]) {
+				const actions = planActions(agents, "project", cwd, false).plan.flatMap((p) => p.actions);
+				expect(actions.filter((a) => a.kind === "copy-dir")).toHaveLength(1);
+				expect(actions.some((a) => a.dest === `${cwd}/.opencode/skills/bpx-council`)).toBe(false);
+				expect(actions.some((a) => a.dest === `${cwd}/.opencode/commands/council.md`)).toBe(true);
+			}
+		}
+	});
+
+	it("avoids duplicate global OpenCode skill discovery with Codex", () => {
+		const actions = planActions([findAgent("opencode")!, findAgent("codex")!], "global", cwd).plan.flatMap((entry) => entry.actions);
+		expect(actions.filter((action) => action.kind === "copy-dir")).toHaveLength(1);
+		expect(actions.some((action) => action.dest.endsWith("/.config/opencode/commands/council.md"))).toBe(true);
+	});
+
+	it("plans OpenCode skills and commands for both scopes", () => {
+		const opencode = findAgent("opencode")!;
+		expect(opencode.actions("project", cwd).map((a) => a.dest)).toEqual([
+			`${cwd}/.opencode/skills/bpx-council`, `${cwd}/.opencode/commands/council.md`,
+		]);
+		expect(opencode.actions("global", cwd).map((a) => a.dest)).toEqual([
+			expect.stringMatching(/\/\.config\/opencode\/skills\/bpx-council$/),
+			expect.stringMatching(/\/\.config\/opencode\/commands\/council\.md$/),
+		]);
 	});
 });
 
@@ -458,12 +501,12 @@ describe("buildGroups", () => {
 		expect(canonicalCopies).toHaveLength(1);
 	});
 
-	it("keeps non-skill actions (the hook, the AGENTS.md block) untouched", () => {
-		const plan = planActions([claude, md], "project", cwd, true).plan; // withHook
+	it("keeps non-skill AGENTS.md block untouched", () => {
+		const plan = planActions([claude, md], "project", cwd, false).plan;
 		const groups = buildGroups(plan, "project", cwd, true);
 		const kinds = groups.flatMap((g) => g.actions).map((a) => a.kind);
-		expect(kinds).toContain("merge-json"); // the Stop hook
-		expect(kinds).toContain("append-block"); // the AGENTS.md block
+		expect(kinds).toContain("append-block");
+		expect(kinds).not.toContain("merge-json");
 	});
 
 	it("is a no-op when nothing being installed is a skill", () => {
@@ -477,10 +520,10 @@ describe("buildGroups", () => {
 		const codex = findAgent("codex")!;
 		const plan = planActions([claude, codex], "global", cwd, false).plan;
 		const groups = buildGroups(plan, "global", cwd, true);
-		// Canonical is synthesized (no agents-skills at global scope).
-		expect(groups[0].label).toContain("Canonical");
+		// Codex now owns the global canonical .agents path.
+		expect(groups[0].label).toContain("Codex");
 		const links = groups.flatMap((g) => g.actions).filter((a) => a.kind === "link-dir");
-		expect(links).toHaveLength(2); // both Claude Code and Codex link
+		expect(links).toHaveLength(1); // Claude links; Codex owns the real copy
 		expect(links.every((a) => a.linkTarget?.endsWith("/.agents/skills/bpx-council"))).toBe(true);
 	});
 

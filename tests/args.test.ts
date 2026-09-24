@@ -51,8 +51,19 @@ describe("parseArgs", () => {
 		expect(args.question).toBe("Q");
 	});
 
-	it("ignores non-numeric --rounds rather than passing NaN downstream", () => {
-		expect(parseArgs(["--rounds", "lots", "Q"]).rounds).toBeUndefined();
+	it("rejects malformed or unbounded numeric options", () => {
+		for (const value of ["lots", "0", "-1", "1.5", "Infinity", "1800001"]) {
+			expect(parseArgs(["--timeout", value, "Q"]).unknown.length).toBeGreaterThan(0);
+		}
+		expect(parseArgs(["--rounds", "5", "Q"]).unknown.length).toBeGreaterThan(0);
+	});
+
+	it("rejects empty backend seats and missing option values without eating next flags", () => {
+		expect(parseArgs(["--backends", "codex,,claude", "Q"]).unknown).toContain("--backends (missing or empty seat)");
+		const args = parseArgs(["--backends", "--mode", "council", "Q"]);
+		expect(args.unknown).toContain("--backends (missing or empty seat)");
+		expect(args.mode).toBe("council");
+		expect(parseArgs(["--config", "--backend", "codex", "Q"]).unknown).toContain("--config (missing value)");
 	});
 
 	it("collects unknown flags instead of swallowing them", () => {

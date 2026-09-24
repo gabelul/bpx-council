@@ -11,19 +11,30 @@
  */
 
 import { resolveConfig } from "./config.js";
+import type { BackendConfig as AdvisorBackend } from "./backend.js";
 import { buildFileContext, readTextAttachments, validateImages } from "./attachments.js";
 import { imageSupport } from "./cli-registry.js";
-import { detectBackend, parseBackendArg, type ExplicitBackend } from "./detect.js";
-import { modelTakesImages } from "./models-list.js";
+import { detectBackend, parseBackendArg, resolveSeatBackend, textOnlyImageWarning, type ExplicitBackend } from "./detect.js";
 import { runSolo } from "./solo.js";
 import { runCouncil } from "./council.js";
 import { runDebate } from "./debate.js";
 import { parseArgs, type Mode } from "./args.js";
 import { runInstall } from "./install.js";
+import { runUninstall } from "./lifecycle.js";
 import { maybeNotifyUpdate, readPackageMeta } from "./update-check.js";
 import { maybeOnboard } from "./onboard.js";
 import { runConfig } from "./config-wizard.js";
 import { runSetup } from "./setup.js";
+import { readStdin } from "./stdin.js";
+import { runDoctor } from "./doctor.js";
+import { addAttempt, newReceipt, settleReceipt, type Receipt } from "./receipt.js";
+
+let activeReceipt: Receipt | undefined;
+
+/** Print exactly one machine-readable object, leaving diagnostics on stderr. */
+function printReceipt(receipt: Receipt): void {
+	process.stdout.write(`${JSON.stringify(receipt)}\n`);
+}
 
 const HELP = `bpx-council — a portable multi-model council CLI.
 
@@ -39,24 +50,26 @@ Commands:
                       seat routes in ~/.bpx-council.json.
   setup                config, then offer to wire into your coding agents.
                       The one-command onboarding.
-  install              Wire bpx-council into the coding agents on this machine
-                      (Claude Code skill + slash command, Codex skill,
-                      AGENTS.md block). Interactive by default.
+  doctor               Offline config, trust and effective route diagnostics.
+                       --probe explicitly makes ONE bounded Solo smoke call.
+  install              Install host instructions; --verify inspects offline.
+  uninstall            Remove only exact bundled artifacts; edited files stay.
                       See "bpx-council install --help".
 
 Options:
   -m, --mode <mode>    solo | council | debate | gut-check (config default if omitted)
+      --format json    Consult only: one versioned JSON receipt on stdout
   -q, --question <q>   The question (alternative to passing it positionally)
-      --isolate        Ignore the project's AGENTS.md / CLAUDE.md, so the
-                       advisor answers independently of your house rules
-                       (codex and claude; others don't read them anyway)
+      --isolate        Change Codex/Claude project instruction handling;
+                       not a CLI filesystem sandbox
+      --no-stdin       Ignore open stdin pipe; use when a calling harness won't close it
   -f, --file <path>    Attach a text file as context (repeatable)
       --image <path>   Attach an image (repeatable). codex and anthropic take
-                       them directly; claude opens the path itself. Other
-                       backends have no image input and will refuse.
-  -c, --config <path>  Path to config file (default: ~/.bpx-council.json)
+                       them directly. Other backends have no image input
+                       and will refuse.
+  -c, --config <path>  Explicit trusted config file; replaces repo discovery
   -b, --backend <name> Force a backend: codex, claude, opencode (CLI) or
-                      anthropic, openai, google (HTTP via API key in env)
+                      anthropic (HTTP). openai/google HTTP aren't implemented.
       --model <id>     Override the model (e.g. claude-opus-4-20250514).
       --effort <level> Reasoning effort for backends that have one (codex,
                        claude): low, medium, high, xhigh, max. Ignored by the
@@ -66,7 +79,8 @@ Options:
                       advocate turn plus a critic turn.
       --timeout <ms>   Per-call timeout (default: 120000). Raise it for long
                       debates on meaty questions.
-      --backends <a,b> Council: backends for architect, critic, simplifier.
+      --backends <a,b> Council: positional routes in roster order; extra specs
+                      fail before calls. Default: architect, critic, simplifier.
       --synthesizer <s> Council or Debate: verdict backend[:model][@effort].
       --advocate <s>   Debate: advocate backend[:model][@effort].
       --critic <s>     Debate: critic backend[:model][@effort].
@@ -77,24 +91,30 @@ Options:
   -v, --version        Print the installed version and exit
 
 Context:
-  If stdin is piped, it's read as conversation context and prepended to the
-  question before being sent to the advisor(s). If not, only the question is sent.
+  Piped stdin must end within three seconds; otherwise the call fails. Use
+  --no-stdin for harnesses that leave a pipe open. TTY skips stdin.
 
 Modes:
   solo        One advisor model, one response. Fast, cheap, the default.
-  council     Several models in parallel, each with a stance. A synthesizer
-              merges their verdicts. For real decisions.
+  council     Several stances in parallel, then a synthesizer. Separate models
+              only when seat routes differ.
   debate      Advocate vs critic, sequential rounds, then a verdict. For
               contentious calls where you want the strongest case on both sides.
-  gut-check   One advisor, terse output. The "does this smell off?" check.
+  gut-check   One advisor, terse output. Separate saved gutCheck.backend;
+              explicit --backend wins, then saved gut-check, then Solo.
 
 Config:
-  ~/.bpx-council.json defines the advisor model and backend. Defaults to the
-  codex CLI (uses your ChatGPT subscription — no API key needed).`;
+  ~/.bpx-council.json defines the advisor model and backend. Auto-detection
+  uses Anthropic HTTP, Codex (read-only), or tool-disabled Claude CLI.
+  Other CLIs need explicit trust. Advanced JSON: trusted personas definitions,
+  council.members (ordered roster), gutCheck.backend and maxOutputTokens.
+  Project auto-discovery permits bundled roster only, no custom prompts.
+  HTTP maxOutputTokens sets max_tokens; CLI gets a prompt request only.`;
 
 const CONFIG_HELP = `bpx-council config / setup — configure your advisor.
 
-bpx-council works with zero config (it auto-detects a backend). This is the
+bpx-council auto-detects Anthropic HTTP, Codex (read-only), or tool-disabled
+Claude CLI when available; other CLIs need an explicit trusted choice. This is the
 optional deepening: pin a backend and model, assign Council/Debate seats, or
 change the default mode — written to ~/.bpx-council.json.
 
@@ -117,15 +137,35 @@ Options:
                        (.bpx-council.json in the repo — commit it to share a
                        council with your team). At runtime, a project config
                        layers over global: it overrides only the keys it sets.
-  -c, --config <path>   Write/read this exact file instead (wins over --scope).
+                       Project routes: Anthropic HTTP only; no
+                       custom commands, args, tmux, or HTTP redirects.
+  -c, --config <path>   Trusted file instead of project discovery (wins over --scope).
   -y, --yes             Skip prompts, take the flags/defaults.
       --dry-run         Print the plan and exit.
   -h, --help            This.
 
 An existing config is merged, not clobbered — keys the wizard doesn't manage
-(and any Council/Debate routes you keep) survive. An unparseable config is
-refused, not overwritten. Seat routes are set up interactively; --yes writes
+(including personas, roster, gut-check, and backend-specific options) survive.
+Edit advanced fields in JSON; the wizard doesn't offer pickers for them.
+An unparseable config is refused, not overwritten. Seat routes are set up interactively; --yes writes
 the core advisor config and keeps existing seat assignments.`;
+
+const DOCTOR_HELP = `bpx-council doctor — offline route diagnostics.
+
+Usage:
+  bpx-council doctor                   Inspect config and all effective seat routes
+  bpx-council doctor --config <path>   Inspect one trusted config instead of discovery
+  bpx-council doctor --probe           ONE bounded Solo smoke call (may incur a charge)
+
+Options:
+      --probe           Explicit opt-in: one 10s call, 8 KiB CLI stdout cap or
+                        32 HTTP output tokens. No Council/Debate fan-out.
+  -c, --config <path>   Trusted config file; replaces repo discovery
+  -h, --help            Show this help
+
+Offline output reports local executable/key presence only, not authentication.
+Probe uses read-only Codex, tool-disabled Claude, or Anthropic HTTP; custom
+commands, args, endpoints and tmux are not probed. No response text printed.`;
 
 const INSTALL_HELP = `bpx-council install — wire the council into your coding agents.
 
@@ -137,41 +177,45 @@ Usage:
   bpx-council install                    Interactive wizard (recommended)
   bpx-council install --dry-run          Show the plan, write nothing
   bpx-council install --agent claude-code --scope global --yes
+  bpx-council install --verify --agent claude-code --scope global
+  bpx-council uninstall --agent claude-code --scope global --dry-run
+  bpx-council uninstall --agent claude-code --scope global --yes
 
 What gets written:
-  Claude Code    skills/bpx-council/SKILL.md  (auto-triggers on "second
-                 opinion", "council", "gut check")
-                 commands/council.md          (/council slash command)
-                 settings.json                (Stop hook, only with --with-hook)
-  Codex          ~/.codex/skills/bpx-council/SKILL.md (global)
-  agents-skills  .agents/skills/bpx-council/SKILL.md — the shared project
-                 convention read by Cursor, Codex, Gemini CLI, Copilot,
-                 OpenCode, Zed, and others (one copy, whole cluster)
-  AGENTS.md      an instruction block, for anything that reads AGENTS.md
+  Claude Code    .claude/skills and .claude/commands (or ~/.claude/)
+  Codex          .agents/skills (project) or ~/.agents/skills (global)
+  OpenCode       .opencode/skills and commands (project), or
+                 ~/.config/opencode/skills and commands (global)
+  agents-skills  .agents/skills project compatibility copy (manual choice)
+  agents-md      project AGENTS.md instruction block
+
+This installs host-readable files, not native host execution or cost tracking.
+Old ~/.codex/skills/bpx-council copies are reported, not migrated.
 
 Options:
-      --agent <id>   claude-code | codex | agents-skills | agents-md.
+      --agent <id>   claude-code | codex | opencode | agents-skills | agents-md.
                     Repeatable, or comma-separated. Omit to be asked.
-      --scope <s>    project (default) | global. Codex skills are global-only.
-      --with-hook    Also add the Claude Code Stop hook. It gut-checks after
-                    every turn, which costs a model call every turn — hence
-                    opt-in.
+      --scope <s>    project (default) | global.
+      --with-hook    Retired. Fails without installing an every-Stop paid hook.
       --link         Symlink each agent's skill dir at one canonical copy
                     (.agents/skills) instead of duplicating it — update once,
                     every agent sees it. Opt-in: symlinks are fragile on
                     Windows and in git clones, so copy is the default, and any
                     link that can't be made falls back to a copy.
   -y, --yes          Skip prompts, take the defaults.
-      --dry-run      Print the plan and exit.
+      --dry-run      Print plan without prompting or changing files.
+      --verify       Install only: inspect selected host artifacts offline;
+                     missing/drifted/current, no auth or model calls.
   -h, --help         This.
 
-Files you own are never rewritten: settings.json gets a structural merge and
-AGENTS.md gets a marker-delimited block, both idempotent. If either is in a
-shape we don't recognise — unparseable JSON, a half-deleted block — the install
-refuses and says so rather than guessing.
-
-The skill and command files are ours, so a reinstall replaces them. The plan
-marks those [overwrite] before writing, and --dry-run shows it without writing.`;
+Uninstall uses same --agent, --scope, --yes and --dry-run selection. Without
+--yes, mutation requires interactive confirmation. No prompt on dry run.
+Only exact bundled bytes are removed. Edited files, extra skill entries,
+foreign links, and malformed marker blocks are left untouched and reported.
+Uninstall removes only exact retired bundled Claude Stop entries; install
+never adds one. Other settings keys and hooks survive. Shared canonical skill
+copies stay when another host link still points to them. Reinstall refuses
+extra skill entries or foreign links; clean those up manually.`;
 
 // ---------------------------------------------------------------------------
 // Main
@@ -179,6 +223,22 @@ marks those [overwrite] before writing, and --dry-run shows it without writing.`
 
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
+	if (args.command === "consult" && args.format === "json") {
+		activeReceipt = newReceipt();
+		if (args.modeExplicit) activeReceipt.mode = args.mode;
+		if (args.help || args.version) throw new Error("--format json cannot be combined with --help or --version");
+	}
+
+	if (args.command === "doctor") {
+		if (args.unknown.length > 0) {
+			console.error('Error: unknown option for doctor. See "bpx-council doctor --help".');
+			process.exitCode = 1;
+			return;
+		}
+		if (args.help) { console.log(DOCTOR_HELP); return; }
+		process.exitCode = await runDoctor(args.configPath, process.cwd(), args.probe);
+		return;
+	}
 
 	// --version short-circuits everything, including the update check — you
 	// asked what you have, not whether something newer exists.
@@ -189,21 +249,22 @@ async function main(): Promise<void> {
 
 	// `install` short-circuits everything below — it writes files instead of
 	// asking a model anything, so none of the backend resolution applies.
-	if (args.command === "install") {
+	if (args.command === "install" || args.command === "uninstall") {
 		if (args.help) {
 			console.log(INSTALL_HELP);
 			return;
 		}
 		if (args.unknown.length > 0) {
-			console.error(`Error: unknown option ${args.unknown.join(", ")}. See "bpx-council install --help".`);
+			console.error(`Error: unknown option ${args.unknown.join(", ")}. See "bpx-council ${args.command} --help".`);
 			process.exit(1);
 		}
-		const code = await runInstall({
+		const code = await (args.command === "install" ? runInstall : runUninstall)({
 			agents: args.install.agents,
 			scope: args.install.scope,
 			withHook: args.install.withHook,
 			yes: args.install.yes,
 			dryRun: args.install.dryRun,
+			verify: args.install.verify,
 			link: args.install.link,
 		});
 		if (code !== 0) process.exit(code);
@@ -245,53 +306,43 @@ async function main(): Promise<void> {
 	// Refuse unknown flags rather than guessing. Silently ignoring one is how
 	// `--model opus "Ship it?"` ended up asking the council "opus".
 	if (args.unknown.length > 0) {
-		console.error(`Error: unknown option ${args.unknown.join(", ")}. See --help.`);
-		process.exit(1);
+		throw new Error(`Error: unknown option ${args.unknown.join(", ")}. See --help.`);
 	}
 
 	if (!args.question) {
-		console.error("Error: a question is required. Pass it as an argument or use --help.");
-		process.exit(1);
+		throw new Error("Error: a question is required. Pass it as an argument or use --help.");
 	}
 
 	// Attachments — files become context, images ride on the backend. Both are
 	// validated before any model call, so a typo'd path fails in milliseconds
 	// rather than after a two-minute council run.
 	let fileContext = "";
+	let imageData: ReturnType<typeof validateImages> = [];
 	try {
 		fileContext = buildFileContext(readTextAttachments(args.files));
-		validateImages(args.images);
+		imageData = validateImages(args.images);
 	} catch (e) {
-		console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
-		process.exit(1);
+		throw new Error(`Error: ${e instanceof Error ? e.message : String(e)}`);
 	}
 
-	// Read piped stdin as context.
-	let stdinContext = "";
-	if (!process.stdin.isTTY) {
-		stdinContext = await readStdin();
-	}
-
-	// Layered: defaults ← global ← the repo's .bpx-council.json (discovered from cwd).
+	// Reject untrusted project routes before waiting for stdin or calling any model.
 	const config = resolveConfig(args.configPath, process.cwd());
 	const mode = args.modeExplicit ? args.mode : config.defaultMode;
+	if (activeReceipt) activeReceipt.mode = mode;
+	const stdinContext = args.noStdin || process.stdin.isTTY ? "" : await readStdin();
 	if ((args.advocate || args.critic) && mode !== "debate") {
-		console.error("Error: --advocate and --critic require --mode debate.");
-		process.exit(1);
+		throw new Error("Error: --advocate and --critic require --mode debate.");
 	}
 	if (args.synthesizer && mode !== "council" && mode !== "debate") {
-		console.error("Error: --synthesizer requires --mode council or debate.");
-		process.exit(1);
+		throw new Error("Error: --synthesizer requires --mode council or debate.");
 	}
 	if (args.backends && mode !== "council") {
-		console.error("Error: --backends requires --mode council.");
-		process.exit(1);
+		throw new Error("Error: --backends requires --mode council.");
 	}
 
 	// Auto-detect the backend if not explicitly configured. Override chain:
 	// --backend arg > config file > env vars (ANTHROPIC_API_KEY etc.) > CLIs on
-	// PATH > default (codex). This is what makes bpx-council work from any host:
-	// Claude Code sets ANTHROPIC_API_KEY → HTTP; Codex has codex on PATH → CLI.
+	// PATH (Codex read-only or tool-disabled Claude). Other CLIs need explicit trust.
 	if (args.backend || !config.solo.backend) {
 		const explicit: ExplicitBackend | undefined = args.backend
 			? parseBackendArg(args.backend)
@@ -328,6 +379,17 @@ async function main(): Promise<void> {
 		(config.solo.backend as { timeoutMs?: number }).timeoutMs = args.timeoutMs;
 	}
 
+	// An explicit --backend wins; otherwise gut-check takes its own saved route.
+	// Resolve before image checks so an unused Solo route never rejects an image.
+	const gutBackend: AdvisorBackend | undefined = mode === "gut-check" && config.solo.backend
+		? args.backend ? config.solo.backend as AdvisorBackend
+			: resolveSeatBackend(config.gutCheck?.backend, config.solo.backend as AdvisorBackend,
+				{ timeoutMs: args.timeoutMs, isolate: args.isolate })
+		: undefined;
+	if (gutBackend?.type === "http" && config.gutCheck?.maxOutputTokens !== undefined) {
+		gutBackend.maxOutputTokens = config.gutCheck.maxOutputTokens;
+	}
+
 	// Images need a backend that actually takes them. Refuse loudly rather than
 	// dropping them — a confident answer about an image the model never saw is
 	// the worst possible outcome here.
@@ -335,54 +397,69 @@ async function main(): Promise<void> {
 		// Multi-seat modes validate and attach images on each resolved route before
 		// the first call; Solo only needs the shared backend checked here.
 		if (mode === "solo" || mode === "gut-check") {
-			const backend = config.solo.backend as { type?: string; command?: string; provider?: string; model?: string } | undefined;
+			const backend = (mode === "gut-check" ? gutBackend : config.solo.backend) as { type?: string; command?: string; provider?: string; model?: string; images?: string[]; imageData?: typeof imageData } | undefined;
 			const command = backend?.type === "http" ? backend.provider : backend?.command;
 			const support = backend?.type === "tmux" ? undefined : command ? imageSupport(command) : undefined;
 			if (!support) {
-				console.error(`Error: ${command ?? "this backend"} can't take images. Try: codex, claude, or anthropic.`);
-				process.exit(1);
+				throw new Error(`Error: ${command ?? "this backend"} can't take images. Try: codex or anthropic.`);
 			}
-			if (modelTakesImages(command as string, backend?.model) === false) {
-				console.error(`Warning: ${backend?.model} takes text only — the image may be ignored. Pick a model with image input.`);
+			if (support === "attach") {
+				if (backend) backend.images = args.images;
+				if (backend?.type === "http") backend.imageData = imageData;
 			}
-			if (support === "attach") (config.solo.backend as { images?: string[] }).images = args.images;
+			const warning = backend ? textOnlyImageWarning(backend as AdvisorBackend) : undefined;
+			if (warning) console.error(warning);
 		}
-		// Claude seats open paths themselves; attach-capable seats get pixels too.
+		// HTTP gets frozen bytes; Codex CLI gets a path (weaker, documented).
 		fileContext = `${fileContext ? `${fileContext}\n\n` : ""}Images to look at: ${args.images.join(", ")}`;
 	}
 
 	const context = [fileContext, stdinContext].filter(Boolean).join("\n\n");
 	const commonArgs = { question: args.question, context: context || undefined, config };
-	const seatOptions = { timeoutMs: args.timeoutMs, isolate: args.isolate, images: args.images };
+	const seatOptions = { timeoutMs: args.timeoutMs, isolate: args.isolate, images: args.images, imageData };
+	const onAttempt = activeReceipt ? (attempt: Parameters<typeof addAttempt>[1]) => addAttempt(activeReceipt!, attempt) : undefined;
+	const onPlan = activeReceipt ? (seats: Receipt["planned"]) => { activeReceipt!.planned = seats; } : undefined;
 
 	// `partial` carries completed Council members or Debate rounds if synthesis fails.
 	let result: { ok: true; text: string } | { ok: false; error: string; partial?: string };
 
 	switch (mode) {
 		case "council": {
-			const r = await runCouncil({ ...commonArgs, backends: args.backends, synthesizer: args.synthesizer, seatOptions });
+			const r = await runCouncil({ ...commonArgs, backends: args.backends, synthesizer: args.synthesizer, seatOptions, onAttempt, onPlan });
 			result = r.ok ? { ok: true, text: r.text } : { ok: false, error: r.error, partial: r.partial };
 			break;
 		}
 		case "debate": {
 			const r = await runDebate({ ...commonArgs, rounds: args.rounds, advocate: args.advocate, critic: args.critic,
-				synthesizer: args.synthesizer, seatOptions });
+				synthesizer: args.synthesizer, seatOptions, onAttempt, onPlan });
 			result = r;
 			break;
 		}
 		case "gut-check": {
-			// Gut-check = solo with terse instruction.
+			// CLI cannot enforce token ceilings; its bound is an instruction only.
+			const limit = config.gutCheck?.maxOutputTokens;
+			const capInstruction = gutBackend?.type !== "http" && limit
+				? ` Aim for at most ${limit} output tokens; this is a prompt request, not an enforced limit.` : "";
 			const r = await runSolo({
 				...commonArgs,
-				question: `${args.question}\n\n(Reply tersely — one or two sentences. Does this smell off?)`,
+				backend: gutBackend,
+				seat: "gut-check",
+				question: `${args.question}\n\n(Reply tersely — one or two sentences. Does this smell off?${capInstruction})`,
+				onAttempt,
 			});
 			result = r;
 			break;
 		}
 		default: {
-			result = await runSolo(commonArgs);
+			result = await runSolo({ ...commonArgs, onAttempt });
 			break;
 		}
+	}
+
+	if (activeReceipt) {
+		printReceipt(settleReceipt(activeReceipt, result));
+		if (!result.ok) process.exitCode = 1;
+		return;
 	}
 
 	if (!result.ok) {
@@ -407,18 +484,11 @@ async function main(): Promise<void> {
 	}
 }
 
-function readStdin(): Promise<string> {
-	return new Promise((resolve) => {
-		let data = "";
-		process.stdin.setEncoding("utf-8");
-		process.stdin.on("data", (chunk) => { data += chunk; });
-		process.stdin.on("end", () => resolve(data.trim()));
-		// If no data in 200ms, assume nothing piped.
-		setTimeout(() => resolve(data.trim()), 200);
-	});
-}
-
 main().catch((e) => {
-	console.error(`bpx-council: ${e instanceof Error ? e.message : String(e)}`);
-	process.exit(1);
+	// An unclosed input pipe must not keep Node alive after the stdin deadline.
+	process.stdin.destroy();
+	const message = e instanceof Error ? e.message : String(e);
+	if (activeReceipt) printReceipt(settleReceipt(activeReceipt, { ok: false, error: message }));
+	else console.error(message.startsWith("Error:") ? message : `bpx-council: ${message}`);
+	process.exitCode = 1;
 });

@@ -15,6 +15,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { preparedImagesError } from "./attachments.js";
 import { cliSpecOrGeneric } from "./cli-registry.js";
 import { callHttpAdvisor, type HttpBackendConfig } from "./http-backend.js";
 import { callPtyAdvisor, type PtyBackendConfig } from "./pty-backend.js";
@@ -26,6 +27,8 @@ export interface CliBackendConfig {
 	command: string;
 	args?: string[];
 	timeoutMs?: number;
+	/** Optional per-call stdout byte cap; doctor probe uses a small bound. */
+	maxStdoutBytes?: number;
 	/**
 	 * Pin the CLI's model. Injected as that CLI's own `--model` flag (codex,
 	 * claude, and opencode all take one). Omit to let the CLI use its configured
@@ -54,10 +57,42 @@ export interface CliBackendConfig {
 	isolate?: boolean;
 }
 
+export interface ProviderUsage {
+	/** Anthropic input_tokens excludes cached input. */
+	inputTokens: number;
+	outputTokens: number;
+	cacheCreationInputTokens?: number;
+	cacheReadInputTokens?: number;
+}
+
 export interface BackendResult {
 	ok: boolean;
 	text: string;
 	error?: string;
+	/** Provider-reported only; absent means unknown, including CLI calls. */
+	usage?: ProviderUsage;
+}
+
+/** Build subprocess-only OpenCode advisor config without erasing provider settings. */
+export function openCodeAdvisorEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	let base: Record<string, unknown> = {};
+	if (env.OPENCODE_CONFIG_CONTENT) {
+		let parsed: unknown;
+		try { parsed = JSON.parse(env.OPENCODE_CONFIG_CONTENT); }
+		catch { throw new Error("OPENCODE_CONFIG_CONTENT is invalid JSON; refusing to replace it"); }
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("OPENCODE_CONFIG_CONTENT must be a JSON object");
+		base = parsed as Record<string, unknown>;
+	}
+	const permission = Object.fromEntries(["*", "read", "bash", "edit", "glob", "grep", "webfetch", "websearch", "task", "skill", "lsp"].map((key) => [key, "deny"]));
+	const agents = base.agent && typeof base.agent === "object" && !Array.isArray(base.agent)
+		? base.agent as Record<string, unknown> : {};
+	return {
+		...env,
+		OPENCODE_PERMISSION: JSON.stringify(permission),
+		OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...base, agent: { ...agents, "bpx-council": {
+			description: "Answer supplied context without tools.", mode: "primary", permission,
+		} } }),
+	};
 }
 
 /**
@@ -73,6 +108,31 @@ export function cliArgsFor(command: string, model?: string, effort?: string, ima
 }
 
 /**
+ * Return a known transport failure without making a provider call.
+ * Multi-seat modes check every resolved route before starting any seat.
+ * @param backend - Resolved seat transport and image inputs.
+ * @returns Failure reason, or undefined when dispatch can proceed.
+ */
+export function advisorTransportError(backend: BackendConfig): string | undefined {
+	if (backend.type === "cli") {
+		const unusable = cliSpecOrGeneric(backend.command).unusable;
+		if (unusable) return `${backend.command} can't be used as an advisor. ${unusable}`;
+		if (backend.images?.length && backend.args?.length) {
+			return `${backend.command} custom CLI args cannot safely attach images; remove args to use generated image flags`;
+		}
+	}
+	if (backend.type === "http") {
+		if (backend.provider === "openai" || backend.provider === "google") return `HTTP backend for ${backend.provider} not yet implemented. Use a CLI backend.`;
+		if (backend.provider !== "anthropic") return `Unknown provider: ${backend.provider}`;
+		const imageError = preparedImagesError(backend.images, backend.imageData);
+		if (imageError) return imageError;
+		const keyEnv = backend.apiKeyEnv ?? "ANTHROPIC_API_KEY";
+		if (!process.env[keyEnv]) return `No API key found in $${keyEnv}. Set it or use a CLI backend.`;
+	}
+	return undefined;
+}
+
+/**
  * Run one CLI advisor call. Spawns the subprocess, hands over the prompt the way
  * that CLI expects (stdin or trailing arg), collects stdout/stderr, resolves on
  * close. Never throws — failures return {ok:false}.
@@ -83,12 +143,9 @@ export function callCliAdvisor(
 	backend: CliBackendConfig,
 ): Promise<BackendResult> {
 	const command = backend.command;
+	const transportError = advisorTransportError(backend);
+	if (transportError) return Promise.resolve({ ok: false, text: "", error: transportError });
 	const spec = cliSpecOrGeneric(command);
-	// Some backends can't work as an advisor at all. Say so now rather than
-	// spawning and waiting out the timeout on a failure we already knew about.
-	if (spec.unusable) {
-		return Promise.resolve({ ok: false, text: "", error: `${command} can't be used as an advisor. ${spec.unusable}` });
-	}
 	// Explicit args win outright; otherwise build from the registry, injecting the
 	// pinned model as the CLI's own flag.
 	const baseArgs = backend.args?.length
@@ -109,37 +166,96 @@ export function callCliAdvisor(
 	// entry (the value of their trailing -p/-x, or a positional prompt).
 	const viaArg = spec.prompt === "arg";
 	const args = viaArg ? [...baseArgs, promptText] : baseArgs;
+	const jsonl = backend.args?.length
+		? command === "codex" ? args.includes("--json") : command === "opencode" ? args.some((arg, i) => arg === "--format" && args[i + 1] === "json") : false
+		: Boolean(spec.jsonl);
+	let env: NodeJS.ProcessEnv | undefined;
+	try { if (command === "opencode" && !backend.args?.length) env = openCodeAdvisorEnv(); }
+	catch (e) { return Promise.resolve({ ok: false, text: "", error: e instanceof Error ? e.message : String(e) }); }
 
 	return new Promise((resolve) => {
 		let stdout = "";
-		let stderr = "";
+		let stdoutBytes = 0;
+		let stderrBytes = 0;
+		let failed: string | undefined;
 		let child;
 
 		try {
-			child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+			child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", env });
 		} catch (e) {
-			resolve({ ok: false, text: "", error: `Failed to spawn "${command}": ${e instanceof Error ? e.message : String(e)}` });
+			resolve({ ok: false, text: "", error: `Failed to spawn "${command}"` });
 			return;
 		}
 
-		const timer = setTimeout(() => {
-			child.kill("SIGTERM");
-			resolve({ ok: false, text: "", error: `"${command}" timed out after ${timeoutMs}ms` });
-		}, timeoutMs);
-
-		child.stdout?.on("data", (d) => { stdout += d.toString(); });
-		child.stderr?.on("data", (d) => { stderr += d.toString(); });
-		child.on("error", (e) => {
+		const signal = (name: NodeJS.Signals) => {
+			try {
+				if (process.platform !== "win32" && child.pid) process.kill(-child.pid, name);
+				else child.kill(name);
+			} catch { /* Already exited. */ }
+		};
+		let cleanupDone = false;
+		let closed = false;
+		let force: ReturnType<typeof setTimeout> | undefined;
+		let fallback: ReturnType<typeof setTimeout> | undefined;
+		const finishFailure = () => {
+			if (cleanupDone && closed && failed) {
+				if (fallback) clearTimeout(fallback);
+				resolve({ ok: false, text: "", error: failed });
+			}
+		};
+		const stop = (reason: string) => {
+			if (failed) return;
+			failed = reason;
 			clearTimeout(timer);
-			resolve({ ok: false, text: "", error: `"${command}" failed: ${e.message}` });
+			child.stdin?.destroy();
+			signal("SIGTERM");
+			// Keep this timer after parent close: a descendant may still own the pipe.
+			force = setTimeout(() => {
+				signal("SIGKILL");
+				cleanupDone = true;
+				fallback = setTimeout(() => {
+					child.stdout?.destroy();
+					child.stderr?.destroy();
+					resolve({ ok: false, text: "", error: failed });
+				}, 1000);
+				fallback.unref();
+				finishFailure();
+			}, 1000);
+		};
+		const timer = setTimeout(() => stop(`"${command}" timed out after ${timeoutMs}ms`), timeoutMs);
+		const MAX_STDOUT = backend.maxStdoutBytes ?? 4 * 1024 * 1024;
+		const MAX_STDERR = 64 * 1024;
+		child.stdout?.on("data", (d: Buffer) => {
+			stdoutBytes += d.length;
+			if (stdoutBytes > MAX_STDOUT) stop(`"${command}" stdout exceeded ${MAX_STDOUT} bytes`);
+			else stdout += d.toString();
 		});
-		child.on("close", (code) => {
+		child.stderr?.on("data", (d: Buffer) => {
+			stderrBytes += d.length;
+			if (stderrBytes > MAX_STDERR) stop(`"${command}" stderr exceeded ${MAX_STDERR} bytes`);
+			// Never put CLI stderr (which may echo prompt or secrets) into a receipt.
+		});
+		child.on("error", (e) => {
+			if (!failed) stop(`"${command}" subprocess failed`);
+		});
+		child.on("close", (code, signalName) => {
+			closed = true;
 			clearTimeout(timer);
-			if (code !== 0 && code !== null) {
-				resolve({ ok: false, text: "", error: `"${command}" exited ${code}: ${(stderr || stdout).slice(0, 200)}` });
+			if (failed) {
+				finishFailure();
 				return;
 			}
-			const text = parseCliOutput(stdout, command);
+			if (force) clearTimeout(force);
+			if (fallback) clearTimeout(fallback);
+			if (code === null) {
+				resolve({ ok: false, text: "", error: `"${command}" terminated by signal ${signalName ?? "unknown"}` });
+				return;
+			}
+			if (code !== 0) {
+				resolve({ ok: false, text: "", error: `"${command}" exited ${code}` });
+				return;
+			}
+			const text = parseCliOutput(stdout, command, jsonl);
 			resolve(text.trim() ? { ok: true, text: text.trim() } : { ok: false, text: "", error: `"${command}" returned no usable output` });
 		});
 
@@ -154,24 +270,28 @@ export function callCliAdvisor(
  * Parse CLI stdout into advisor text. JSONL producers (codex, opencode) embed
  * the payload in JSON lines; the rest emit plain text. Tolerant of junk.
  */
-export function parseCliOutput(stdout: string, command: string): string {
+export function parseCliOutput(stdout: string, command: string, jsonl = Boolean(cliSpecOrGeneric(command).jsonl)): string {
 	const trimmed = stdout.trim();
 	if (!trimmed) return "";
 
-	if (cliSpecOrGeneric(command).jsonl) {
+	if (jsonl) {
 		const collected: string[] = [];
 		for (const line of trimmed.split("\n")) {
 			const l = line.trim();
 			if (!l.startsWith("{")) continue;
 			try {
 				const parsed = JSON.parse(l);
-				const t = parsed?.item?.text ?? parsed?.text;
+				const t = command === "codex"
+					? parsed?.type === "item.completed" && parsed?.item?.type === "agent_message" ? parsed.item.text : undefined
+					: parsed?.type === "text" ? parsed?.part?.text : undefined;
 				if (typeof t === "string" && t.trim()) collected.push(t);
 			} catch { /* junk preamble */ }
 		}
-		if (collected.length > 0) return collected.join("\n");
+		return collected.join("\n");
 	}
 
+	// Plain mode belongs to the advisor, even when its answer is valid JSON.
+	// Event filtering applies only to backends explicitly requesting JSONL.
 	return trimmed;
 }
 

@@ -10,7 +10,7 @@
  * patterns, delivery verification via capture-pane.
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 export interface PtyBackendConfig {
 	type: "tmux";
@@ -53,10 +53,15 @@ function stripAnsi(text: string): string {
 		.replace(/[\x0e\x0f]/g, "");
 }
 
+/** Quote executable path for tmux's own shell, after tmux receives argv safely. */
+function quoteShellArg(value: string): string {
+	return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 /** Capture the tmux pane content, ANSI-stripped. */
 function capturePane(session: string, scrollback = 50): string | undefined {
 	try {
-		const raw = execSync(`tmux capture-pane -t ${session} -p -S -${scrollback}`, {
+		const raw = execFileSync("tmux", ["capture-pane", "-t", session, "-p", "-S", `-${scrollback}`], {
 			timeout: 3_000, stdio: "pipe",
 		}).toString();
 		return stripAnsi(raw);
@@ -85,22 +90,23 @@ function sendToPane(session: string, message: string): boolean {
 		try {
 			// Multiline: load-buffer + paste-buffer (clean newline handling).
 			// -p = bracket paste mode, -d = delete buffer after paste.
-			execSync(`printf '%s' '${message.replace(/'/g, "'\\''")}' | tmux load-buffer -b ${bufferName} -`, {
-				timeout: 3_000, stdio: "pipe",
+			execFileSync("tmux", ["load-buffer", "-b", bufferName, "-"], {
+				input: message, timeout: 3_000, stdio: "pipe",
 			});
-			execSync(`tmux paste-buffer -p -d -b ${bufferName} -t ${session}`, {
+			execFileSync("tmux", ["paste-buffer", "-p", "-d", "-b", bufferName, "-t", session], {
 				timeout: 3_000, stdio: "pipe",
 			});
 		} catch {
 			// Fallback: literal send-keys (single-line only).
 			try {
-				const escaped = message.replace(/'/g, "'\\''").replace(/\n/g, " ");
-				execSync(`tmux send-keys -t ${session} -l '${escaped}'`, { timeout: 3_000, stdio: "pipe" });
+				execFileSync("tmux", ["send-keys", "-t", session, "-l", message.replace(/\n/g, " ")], { timeout: 3_000, stdio: "pipe" });
 			} catch { continue; }
 		}
 		// Separate Enter (prevents input-buffer race condition).
 		try {
-			execSync(`sleep 0.5 && tmux send-keys -t ${session} Enter`, { timeout: 3_000, stdio: "pipe" });
+			// Tmux gets argv, never a shell command built from prompt bytes.
+			execFileSync("sleep", ["0.5"], { timeout: 1_000, stdio: "pipe" });
+			execFileSync("tmux", ["send-keys", "-t", session, "Enter"], { timeout: 3_000, stdio: "pipe" });
 		} catch { /* continue anyway */ }
 
 		// Verify delivery: check the first 40 chars appear in the pane.
@@ -128,13 +134,11 @@ export async function callPtyAdvisor(
 	const startupMs = backend.startupMs ?? DEFAULT_STARTUP_MS;
 	const timeoutMs = backend.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	// --dangerously-skip-permissions: prevents interactive prompts from blocking.
-	const bootCmd = command === "claude"
-		? `${command} --dangerously-skip-permissions`
-		: command;
+	const bootCmd = `${quoteShellArg(command)}${command === "claude" ? " --dangerously-skip-permissions" : ""}`;
 
 	// 1. Spawn the agent in a detached tmux session.
 	try {
-		execSync(`tmux new-session -d -s ${session} '${bootCmd}'`, { timeout: 5_000, stdio: "pipe" });
+		execFileSync("tmux", ["new-session", "-d", "-s", session, bootCmd], { timeout: 5_000, stdio: "pipe" });
 	} catch (e) {
 		return { ok: false, text: "", error: `Failed to start "${command}" in tmux: ${e instanceof Error ? e.message : String(e)}. Is tmux installed?` };
 	}
@@ -217,14 +221,14 @@ export async function callPtyAdvisor(
 		return { ok: true, text: text.trim() };
 	} finally {
 		// 7. Clean up.
-		try { execSync(`tmux kill-session -t ${session}`, { timeout: 3_000, stdio: "pipe" }); } catch { /* gone */ }
+		try { execFileSync("tmux", ["kill-session", "-t", session], { timeout: 3_000, stdio: "pipe" }); } catch { /* gone */ }
 	}
 }
 
 /** Raw tmux send-keys (no processing). */
 function tmuxSendKeys(session: string, ...args: string[]): void {
 	try {
-		execSync(`tmux send-keys -t ${session} ${args.map((a) => `'${a}'`).join(" ")}`, {
+		execFileSync("tmux", ["send-keys", "-t", session, ...args], {
 			timeout: 3_000, stdio: "pipe",
 		});
 	} catch { /* best effort */ }
@@ -302,7 +306,7 @@ function sleep(ms: number): Promise<void> {
 /** Check if tmux is installed and available on PATH. */
 export function isTmuxAvailable(): boolean {
 	try {
-		execSync("which tmux", { timeout: 2_000, stdio: "pipe" });
+		execFileSync("tmux", ["-V"], { timeout: 2_000, stdio: "pipe" });
 		return true;
 	} catch {
 		return false;

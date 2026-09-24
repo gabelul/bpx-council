@@ -3,19 +3,24 @@
  *
  * Lives at ~/.bpx-council.json (or a path passed via --config). Defines the
  * advisor model, the backend (CLI like codex/claude, or HTTP), and optional
- * personas for council mode. Kept intentionally minimal for the prototype —
- * the full persona/council config from bpx-consult carries over later.
+ * personas for council mode.
  */
 
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
+import { validateConfig } from "./config-validation.js";
+import type { Stance } from "./personas.js";
 
 export interface BackendConfig {
-	type: "cli" | "http";
+	type: "cli" | "http" | "tmux";
 	command?: string;
 	args?: string[];
 	timeoutMs?: number;
+	startupMs?: number;
+	sessionPrefix?: string;
+	isolate?: boolean;
+	images?: string[];
 	/** HTTP only: the provider name. */
 	provider?: "anthropic" | "openai" | "google";
 	/** The model ID — pinned for CLI backends too, not just HTTP. */
@@ -51,11 +56,13 @@ export interface AdvisorConfig {
 }
 
 export interface CouncilConfig {
+	/** Ordered persona names. Omit for architect, critic, simplifier. */
+	members?: string[];
 	/**
 	 * Persona name → backend spec, e.g. `{ "architect": "codex", "critic": "claude" }`.
 	 * Unassigned personas use the shared `solo.backend`.
 	 */
-	backends?: Record<string, string>;
+	backends?: Record<string, string | null>;
 	/** Backend[:model][@effort] for the verdict; null resets inherited config to Solo. */
 	synthesizer?: string | null;
 }
@@ -67,7 +74,17 @@ export interface DebateConfig {
 	synthesizer?: string | null;
 }
 
+export interface GutCheckConfig {
+	/** Independent route; null resets to Solo across config layers. */
+	backend?: string | null;
+	/** Anthropic HTTP max_tokens; CLI routes receive a prompt-only length request. */
+	maxOutputTokens?: number;
+}
+
 export interface BpxCouncilConfig {
+	/** Trusted persona definitions, merged by name across config layers. */
+	personas?: Record<string, { stance: Stance; systemPrompt: string }>;
+	gutCheck?: GutCheckConfig;
 	defaultMode: "solo" | "council" | "debate" | "gut-check";
 	solo: AdvisorConfig;
 	council?: CouncilConfig;
@@ -128,13 +145,27 @@ export function projectConfigWritePath(cwd: string): string {
 	}
 }
 
-function readConfigFile(path: string): Partial<BpxCouncilConfig> | undefined {
-	if (!existsSync(path)) return undefined;
-	try {
-		return JSON.parse(readFileSync(path, "utf-8")) as Partial<BpxCouncilConfig>;
-	} catch {
+/** Parse one config and reject invalid keys instead of silently changing route. */
+function readConfigFile(path: string, project = false, required = false): Partial<BpxCouncilConfig> | undefined {
+	if (!existsSync(path)) {
+		if (required) throw new Error(`${path}: config file not found`);
 		return undefined;
 	}
+	let contents: string;
+	try {
+		contents = readFileSync(path, "utf-8");
+	} catch {
+		throw new Error(`${path}: unreadable config`);
+	}
+	let value: unknown;
+	try {
+		value = JSON.parse(contents);
+	} catch {
+		// SyntaxError messages can contain excerpts of the config, including secrets.
+		throw new Error(`${path}: invalid JSON`);
+	}
+	validateConfig(value, path, project);
+	return value;
 }
 
 /**
@@ -157,6 +188,8 @@ export function mergeConfigs(base: BpxCouncilConfig, over: Partial<BpxCouncilCon
 		if (Object.keys(backends).length > 0) merged.council.backends = backends;
 	}
 	if (base.debate || over.debate) merged.debate = { ...base.debate, ...over.debate };
+	if (base.personas || over.personas) merged.personas = { ...base.personas, ...over.personas };
+	if (base.gutCheck || over.gutCheck) merged.gutCheck = { ...base.gutCheck, ...over.gutCheck };
 	return merged;
 }
 
@@ -165,19 +198,19 @@ export function mergeConfigs(base: BpxCouncilConfig, over: Partial<BpxCouncilCon
  *
  * An explicit `--config <path>` replaces discovery — that one file, over the
  * defaults. Otherwise global `~/.bpx-council.json` layers over the defaults, and
- * a discovered project `.bpx-council.json` layers over that. Unparseable files
- * are skipped, never fatal — a bad config shouldn't stop you asking a question.
+ * a discovered project `.bpx-council.json` layers over that. Invalid files fail
+ * with their path and key before any advisor call.
  */
 export function resolveConfig(explicitPath: string | undefined, cwd: string): BpxCouncilConfig {
 	if (explicitPath) {
-		return mergeConfigs(DEFAULT_CONFIG, readConfigFile(explicitPath) ?? {});
+		return mergeConfigs(DEFAULT_CONFIG, readConfigFile(explicitPath, false, true) ?? {});
 	}
 	let config = DEFAULT_CONFIG;
 	const global = readConfigFile(configPath());
 	if (global) config = mergeConfigs(config, global);
 	const projectPath = projectConfigPath(cwd);
 	if (projectPath) {
-		const project = readConfigFile(projectPath);
+		const project = readConfigFile(projectPath, true);
 		if (project) config = mergeConfigs(config, project);
 	}
 	return config;

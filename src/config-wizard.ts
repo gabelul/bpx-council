@@ -14,6 +14,7 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import { MODES, type Mode } from "./args.js";
 import { type BackendConfig, type BpxCouncilConfig, type DebateConfig, configPath, projectConfigWritePath } from "./config.js";
 import { availableBackends, parseBackendArg, type AvailableBackend } from "./detect.js";
+import { validateConfig } from "./config-validation.js";
 import { listEfforts, listModels } from "./models-list.js";
 import { printStarNudge } from "./nudge.js";
 import { BAR, railIntro, railNote, railOutro, railStep } from "./rail.js";
@@ -56,7 +57,7 @@ export interface Answers {
 	/** The advisor backend spec, e.g. "codex" or "codex:gpt-5-codex". */
 	soloSpec: string;
 	/** Only Council members explicitly changed in this wizard run. */
-	council?: Record<string, string>;
+	council?: Record<string, string | null>;
 	/** null means inherit Solo, including when a project overrides a global choice. */
 	councilSynthesizer?: string | null;
 	/** Debate roles when the user opted into configuring them. */
@@ -96,8 +97,12 @@ export function backendConfigFromSpec(spec: string): BackendConfig {
  * skipping a seat setup keeps existing assignments.
  */
 export function buildConfig(answers: Answers, existing?: BpxCouncilConfig): BpxCouncilConfig {
+	const selected = backendConfigFromSpec(answers.soloSpec);
+	const previous = existing?.solo?.backend;
+	const sameBackend = previous?.type === selected.type && (selected.type === "http"
+		? previous.provider === selected.provider : previous?.command === selected.command);
 	const solo: BpxCouncilConfig["solo"] = {
-		backend: backendConfigFromSpec(answers.soloSpec),
+		backend: sameBackend ? { ...previous, ...selected } : selected,
 	};
 	// Carry a legacy `model` forward if one is already in the file, but never
 	// write a new one: it was decoration, and the model belongs on the backend.
@@ -144,11 +149,28 @@ function writeConfigFile(path: string, config: BpxCouncilConfig): void {
 }
 
 /** Read the existing config, or a refusal if it's there but unparseable. */
-function readExisting(path: string): { ok: true; config?: BpxCouncilConfig } | { ok: false } {
+function readExisting(path: string, project = false): { ok: true; config?: BpxCouncilConfig } | { ok: false } {
 	if (!existsSync(path)) return { ok: true };
+	let contents: string;
 	try {
-		return { ok: true, config: JSON.parse(readFileSync(path, "utf-8")) as BpxCouncilConfig };
+		contents = readFileSync(path, "utf-8");
 	} catch {
+		console.error(red(`${path}: unreadable config`));
+		return { ok: false };
+	}
+	let value: unknown;
+	try {
+		value = JSON.parse(contents);
+	} catch {
+		// SyntaxError can quote config bytes, including credentials.
+		console.error(red(`${path}: invalid JSON`));
+		return { ok: false };
+	}
+	try {
+		validateConfig(value, path, project);
+		return { ok: true, config: value as BpxCouncilConfig };
+	} catch (e) {
+		console.error(red(e instanceof Error ? e.message : String(e)));
 		return { ok: false };
 	}
 }
@@ -158,7 +180,9 @@ function currentBackendName(existing: BpxCouncilConfig | undefined, available: A
 	const b = existing?.solo?.backend;
 	const name = b?.type === "http" ? b.provider : b?.command;
 	if (name && available.some((a) => a.name === name)) return name;
-	return available[0]?.name ?? "codex";
+	return available.find((a) => a.name === "anthropic")?.name
+		?? available.find((a) => a.name === "claude")?.name
+		?? available[0]?.name ?? "codex";
 }
 
 function printPlan(path: string, config: BpxCouncilConfig, rail = false): void {
@@ -174,6 +198,7 @@ function printPlan(path: string, config: BpxCouncilConfig, rail = false): void {
 	];
 	if (config.council) {
 		rows.push(dim("council"));
+		if (config.council.members) rows.push(`  ${dim("members".padEnd(12))} ${config.council.members.join(", ")}`);
 		for (const [persona, spec] of Object.entries(config.council.backends ?? {})) {
 			rows.push(`  ${dim(persona.padEnd(12))} ${spec}`);
 		}
@@ -181,6 +206,10 @@ function printPlan(path: string, config: BpxCouncilConfig, rail = false): void {
 			rows.push(`  ${dim("synthesizer".padEnd(12))} ${config.council.synthesizer ?? "shared Solo"}`);
 		}
 	}
+	if (config.gutCheck) {
+		rows.push(`${dim("gut-check")}  ${config.gutCheck.backend ?? "shared Solo"}${config.gutCheck.maxOutputTokens ? ` · ${config.gutCheck.maxOutputTokens} output tokens (HTTP only)` : ""}`);
+	}
+	if (config.personas) rows.push(`${dim("personas")}   ${Object.keys(config.personas).join(", ")}`);
 	if (config.debate) {
 		rows.push(dim("debate"));
 		for (const [role, spec] of Object.entries(config.debate)) {
@@ -399,7 +428,14 @@ async function finalize(
 	dryRun: boolean,
 	confirmFn?: () => Promise<boolean>,
 	rail = false,
+	project = false,
 ): Promise<number> {
+	try {
+		validateConfig(config, path, project);
+	} catch (e) {
+		console.error(red(e instanceof Error ? e.message : String(e)));
+		return 1;
+	}
 	printPlan(path, config, rail);
 	if (dryRun) {
 		if (rail) railOutro([dim("Dry run — nothing written.")]);
@@ -483,7 +519,7 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 		const path = targetPath({ ...opts, scope });
 		if (asksScope) scopeChrome.answered("Save where", scope === "project" ? "this project" : "global", prettyPath(path));
 
-		const read = readExisting(path);
+		const read = readExisting(path, scope === "project" && !opts.configPath);
 		if (!read.ok) return refuseUnparseable(path);
 
 		// Re-running? Say what's already there, so it's clear this edits rather
@@ -496,18 +532,38 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 
 		// The scope question, when asked, shifts everything gatherAnswers numbers.
 		const chrome = makeRailChrome(total, asksScope ? 1 : 0);
-		const answers = await gatherAnswers(productionPickers, available, read.config, chrome);
+		const choices = scope === "project" && !opts.configPath ? available.filter((b) => b.name === "anthropic") : available;
+		if (choices.length === 0) {
+			console.error(red("Project config needs ANTHROPIC_API_KEY for tool-free Anthropic HTTP. Use global config or explicit --config for custom routes."));
+			return 1;
+		}
+		const answers = await gatherAnswers(productionPickers, choices, read.config, chrome);
 		const config = buildConfig(answers, read.config);
-		return await finalize(path, config, opts.dryRun ?? false, () => runConfirm(bold("Write this config?"), true, { rail: true }), true);
+		return await finalize(path, config, opts.dryRun ?? false, () => runConfirm(bold("Write this config?"), true, { rail: true }), true, scope === "project" && !opts.configPath);
 	}
 
 	// Headless: flags + existing at the chosen scope, no confirm.
 	const path = targetPath(opts);
-	const read = readExisting(path);
+	const read = readExisting(path, opts.scope === "project" && !opts.configPath);
 	if (!read.ok) return refuseUnparseable(path);
 	const existing = read.config;
 
-	const backendName = opts.backend ?? currentBackendName(existing, available);
+	const project = opts.scope === "project" && !opts.configPath;
+	const choices = project ? available.filter((b) => b.name === "anthropic") : available;
+	if (project && choices.length === 0) {
+		console.error(red("Project config needs ANTHROPIC_API_KEY for tool-free Anthropic HTTP. Use global config or explicit --config for custom routes."));
+		return 1;
+	}
+	if (project && opts.backend && !choices.some((b) => b.name === opts.backend)) {
+		const key = parseBackendArg(opts.backend).type === "http" ? "solo.backend.provider" : "solo.backend.command";
+		console.error(red(`${path}: ${key} ${opts.backend} is not an available project-safe route. Use global config or explicit --config for custom routes.`));
+		return 1;
+	}
+	if (!project && !opts.backend && !existing?.solo?.backend && !choices.some((b) => b.name === "anthropic" || b.name === "claude")) {
+		console.error(red("No tool-free default available. Specify a trusted --backend explicitly, or set ANTHROPIC_API_KEY / install Claude CLI."));
+		return 1;
+	}
+	const backendName = opts.backend ?? currentBackendName(existing, choices);
 	const config = buildConfig(
 		{
 			mode: opts.mode ?? existing?.defaultMode ?? "solo",
@@ -516,11 +572,12 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 		},
 		existing,
 	);
-	return finalize(path, config, opts.dryRun ?? false);
+	if (!opts.backend && !opts.model && !opts.effort && existing?.solo?.backend) config.solo.backend = existing.solo.backend;
+	return finalize(path, config, opts.dryRun ?? false, undefined, false, opts.scope === "project" && !opts.configPath);
 }
 
 function refuseUnparseable(path: string): number {
-	console.error(red(`${path} isn't valid JSON — left untouched.`));
+	console.error(red(`${path} is invalid — left untouched.`));
 	console.error(dim("Fix or move it, then re-run."));
 	return 1;
 }

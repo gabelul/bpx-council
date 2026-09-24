@@ -38,12 +38,12 @@ describe("parseBackendArg", () => {
 
 describe("cliArgsFor — model flag injection", () => {
 	it("returns the preset unchanged when no model is pinned", () => {
-		expect(cliArgsFor("codex")).toEqual(["exec", "--sandbox", "read-only", "--skip-git-repo-check", "-"]);
+		expect(cliArgsFor("codex")).toEqual(["exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check", "-"]);
 	});
 
 	it("injects --model after `exec` for codex", () => {
 		expect(cliArgsFor("codex", "gpt-5-codex")).toEqual([
-			"exec",
+			"exec", "--json",
 			"--model",
 			"gpt-5-codex",
 			"--sandbox",
@@ -54,12 +54,12 @@ describe("cliArgsFor — model flag injection", () => {
 	});
 
 	it("injects --model before -p for claude", () => {
-		expect(cliArgsFor("claude", "claude-opus-4-8")).toEqual(["--model", "claude-opus-4-8", "-p"]);
+		expect(cliArgsFor("claude", "claude-opus-4-8")).toEqual(["--model", "claude-opus-4-8", "--tools", "", "-p"]);
 	});
 
 	it("injects --model after `run` for opencode", () => {
 		expect(cliArgsFor("opencode", "anthropic/claude-opus-4-8")).toEqual([
-			"run",
+			"run", "--format", "json", "--pure", "--agent", "bpx-council",
 			"--model",
 			"anthropic/claude-opus-4-8",
 		]);
@@ -105,11 +105,11 @@ describe("reasoning effort", () => {
 
 	it("injects codex's effort as a config override after exec", () => {
 		const args = cliArgsFor("codex", "gpt-5.6-sol", "xhigh");
-		expect(args.slice(0, 4)).toEqual(["exec", "-c", "model_reasoning_effort=xhigh", "--model"]);
+		expect(args.slice(0, 5)).toEqual(["exec", "--json", "-c", "model_reasoning_effort=xhigh", "--model"]);
 	});
 
 	it("injects claude's effort as its own flag", () => {
-		expect(cliArgsFor("claude", undefined, "max")).toEqual(["--effort", "max", "-p"]);
+		expect(cliArgsFor("claude", undefined, "max")).toEqual(["--effort", "max", "--tools", "", "-p"]);
 	});
 
 	it("ignores effort for backends with no such control", () => {

@@ -14,7 +14,7 @@ Entry and wiring:
   and treated as fatal by `index.ts` — see troubleshooting for why.
 - `src/config.ts` — config loading (`~/.bpx-council.json`)
 - `src/detect.ts` — backend auto-detection. Override chain: `--backend` >
-  config > `*_API_KEY` env vars > CLIs on PATH > `codex`.
+  config > `ANTHROPIC_API_KEY` > Codex/Claude CLI on PATH > error.
 
 Modes:
 
@@ -31,8 +31,13 @@ Backends:
 
 ### Council is multi-model only when backends are assigned
 
-`council` resolves a backend **per persona**: `--backends` (positional) >
+`council` uses `council.members` order (default architect, critic, simplifier)
+and resolves a backend **per persona**: `--backends` (positional) >
 `config.council.backends` (by persona name) > the shared `solo.backend`.
+Trusted global/explicit `personas` definitions replace or add named prompts;
+project auto-discovery may only select bundled members, never inject prompts.
+Gut-check has independent `gutCheck.backend`: explicit `--backend` > saved
+route > Solo. `maxOutputTokens` is HTTP `max_tokens`, CLI prompt request only.
 
 With no assignment every persona runs on the same model — three stances, one
 model. That's a legitimate cheap mode, but it is *not* multi-model, and the

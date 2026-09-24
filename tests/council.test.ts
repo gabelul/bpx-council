@@ -11,12 +11,12 @@ import { DEFAULT_CONFIG, loadConfig } from "../src/config.js";
 
 describe("parseCliOutput", () => {
 	it("extracts text from codex JSONL lines, ignoring junk preamble", () => {
-		const stdout = `Using model gpt-5\n{"type":"item.completed","item":{"text":"The answer is 42."}}\n`;
+		const stdout = `Using model gpt-5\n{"type":"item.completed","item":{"type":"agent_message","text":"The answer is 42."}}\n`;
 		expect(parseCliOutput(stdout, "codex")).toBe("The answer is 42.");
 	});
 
 	it("collects multiple JSONL payloads in order", () => {
-		const stdout = `{"item":{"text":"First part."}}\n{"item":{"text":"Second part."}}\n`;
+		const stdout = `{"type":"item.completed","item":{"type":"agent_message","text":"First part."}}\n{"type":"item.completed","item":{"type":"agent_message","text":"Second part."}}\n`;
 		expect(parseCliOutput(stdout, "codex")).toBe("First part.\nSecond part.");
 	});
 
@@ -29,17 +29,13 @@ describe("parseCliOutput", () => {
 	});
 
 	it("tolerates non-JSON lines that start with {", () => {
-		const stdout = `{not valid json}\n{"item":{"text":"Real payload."}}\n`;
+		const stdout = `{not valid json}\n{"type":"item.completed","item":{"type":"agent_message","text":"Real payload."}}\n`;
 		expect(parseCliOutput(stdout, "codex")).toBe("Real payload.");
 	});
 
-	it("falls back to the whole stdout when JSONL has no text payloads", () => {
-		// No extractable text in JSONL → return everything (defensive: better to
-		// return potentially-useful stdout than empty).
-		const stdout = `{"type":"status","status":"running"}\nPlain text after.\n`;
-		const result = parseCliOutput(stdout, "codex");
-		expect(result).toContain("Plain text after.");
-		expect(result.trim()).toBe(stdout.trim());
+	it("does not mistake tool output or progress JSONL for an advisor answer", () => {
+		const stdout = `{"type":"item.completed","item":{"type":"command_execution","text":"tool output"}}\n{"type":"status","status":"running"}\n`;
+		expect(parseCliOutput(stdout, "codex")).toBe("");
 	});
 });
 
@@ -76,9 +72,7 @@ describe("config", () => {
 		expect(DEFAULT_CONFIG.solo.model).toBeUndefined();
 	});
 
-	it("loadConfig returns defaults when no file exists", () => {
-		const cfg = loadConfig("/nonexistent/path/bpx-council.json");
-		expect(cfg.defaultMode).toBe("solo");
-		expect(cfg.solo.model).toBeUndefined();
+	it("loadConfig rejects a missing explicit file instead of falling back", () => {
+		expect(() => loadConfig("/nonexistent/path/bpx-council.json")).toThrow(/config file not found/);
 	});
 });

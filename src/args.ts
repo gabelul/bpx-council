@@ -14,7 +14,7 @@ export type Mode = (typeof MODES)[number];
  * Subcommand. `consult` is the default and the historical behaviour — a bare
  * `bpx-council "question"` still works exactly as before.
  */
-export type Command = "consult" | "install" | "config" | "setup";
+export type Command = "consult" | "install" | "uninstall" | "config" | "setup" | "doctor";
 
 export interface InstallArgs {
 	/** `--agent` may be repeated or comma-separated. Empty means "ask". */
@@ -23,6 +23,8 @@ export interface InstallArgs {
 	withHook: boolean;
 	yes: boolean;
 	dryRun: boolean;
+	/** Inspect installed artifacts without changes. Install-only. */
+	verify: boolean;
 	/** Symlink skill dirs at one canonical copy instead of duplicating. */
 	link: boolean;
 }
@@ -41,11 +43,14 @@ export interface ConfigureArgs {
 
 export interface CliArgs {
 	command: Command;
+	/** Explicit opt-in to one bounded Solo smoke call. */
+	probe: boolean;
 	/** Only meaningful when `command === "install"`. */
 	install: InstallArgs;
 	/** Only meaningful when `command === "config"` or `"setup"`. */
 	configure: ConfigureArgs;
 	question: string | undefined;
+	format: "markdown" | "json";
 	mode: Mode;
 	/** Whether --mode was passed, so config.defaultMode only wins when it wasn't. */
 	modeExplicit: boolean;
@@ -59,6 +64,8 @@ export interface CliArgs {
 	images: string[];
 	/** Cut the advisor off from the project's AGENTS.md / CLAUDE.md. */
 	isolate: boolean;
+	/** Ignore a deliberately open stdin pipe (common in calling harnesses). */
+	noStdin: boolean;
 	rounds: number | undefined;
 	timeoutMs: number | undefined;
 	/**
@@ -80,9 +87,11 @@ export interface CliArgs {
 export function parseArgs(argv: string[]): CliArgs {
 	const args: CliArgs = {
 		command: "consult",
-		install: { agents: [], scope: undefined, withHook: false, yes: false, dryRun: false, link: false },
+		probe: false,
+		install: { agents: [], scope: undefined, withHook: false, yes: false, dryRun: false, verify: false, link: false },
 		configure: { backend: undefined, model: undefined, effort: undefined, mode: undefined, scope: undefined, yes: false, dryRun: false },
 		question: undefined,
+		format: "markdown",
 		mode: "solo",
 		modeExplicit: false,
 		configPath: undefined,
@@ -92,6 +101,7 @@ export function parseArgs(argv: string[]): CliArgs {
 		files: [],
 		images: [],
 		isolate: false,
+		noStdin: false,
 		rounds: undefined,
 		timeoutMs: undefined,
 		backends: undefined,
@@ -107,19 +117,38 @@ export function parseArgs(argv: string[]): CliArgs {
 	// later in the line belongs to the question — "should I install this?" is a
 	// perfectly reasonable thing to ask the council, and hijacking it would be
 	// the same class of bug as the old --model swallow.
-	if (argv[0] === "install") {
-		args.command = "install";
+	if (argv[0] === "install" || argv[0] === "uninstall") {
+		args.command = argv[0];
 		return parseInstallArgs(argv.slice(1), args);
 	}
 	if (argv[0] === "config" || argv[0] === "setup") {
 		args.command = argv[0];
 		return parseConfigureArgs(argv.slice(1), args);
 	}
+	if (argv[0] === "doctor") {
+		args.command = "doctor";
+		for (let i = 1; i < argv.length; i++) {
+			const flag = argv[i];
+			if (flag === "--help" || flag === "-h") args.help = true;
+			else if (flag === "--probe") args.probe = true;
+			else if (flag === "--config" || flag === "-c") {
+				const value = takeValue(argv, i);
+				if (value === undefined) args.unknown.push(`${flag} (missing value)`);
+				else { args.configPath = value; i++; }
+			} else args.unknown.push(flag);
+		}
+		return args;
+	}
 
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "-h" || a === "--help") args.help = true;
 		else if (a === "--version" || a === "-v" || a === "-V") args.version = true;
+		else if (a === "--format") {
+			const value = takeValue(argv, i);
+			if (value === "json") { args.format = "json"; i++; }
+			else { if (value !== undefined) i++; args.unknown.push(`--format ${value ?? "(missing value)"}`); }
+		}
 		else if (a === "--mode" || a === "-m") {
 			// Validate rather than cast. `--mode counsel` (a plausible typo)
 			// used to fall through to the solo branch and answer as if nothing
@@ -130,12 +159,24 @@ export function parseArgs(argv: string[]): CliArgs {
 				args.modeExplicit = true;
 			} else args.unknown.push(`--mode ${value ?? ""}`.trim());
 		}
-		else if (a === "--config" || a === "-c") args.configPath = argv[++i];
-		else if (a === "--backend" || a === "-b") args.backend = argv[++i];
-		else if (a === "--question" || a === "-q") args.question = argv[++i];
-		else if (a === "--model") args.model = argv[++i];
+		else if (a === "--config" || a === "-c" || a === "--backend" || a === "-b" || a === "--question" || a === "-q" || a === "--model") {
+			const value = takeValue(argv, i);
+			if (!value) args.unknown.push(`${a} (missing value)`);
+			else {
+				i++;
+				if (a === "--config" || a === "-c") args.configPath = value;
+				else if (a === "--backend" || a === "-b") args.backend = value;
+				else if (a === "--model") args.model = value;
+				else args.question = value;
+			}
+		}
 		else if (a === "--isolate") args.isolate = true;
-		else if (a === "--effort") args.effort = takeValue(argv, i) ? argv[++i] : undefined;
+		else if (a === "--no-stdin") args.noStdin = true;
+		else if (a === "--effort") {
+			const value = takeValue(argv, i);
+			if (!value) args.unknown.push("--effort (missing value)");
+			else { i++; args.effort = value; }
+		}
 		// Repeatable: each --file/--image adds one path rather than replacing.
 		else if (a === "--file" || a === "-f") {
 			const v = takeValue(argv, i);
@@ -152,13 +193,21 @@ export function parseArgs(argv: string[]): CliArgs {
 				args.images.push(v);
 			}
 		}
-		else if (a === "--rounds") args.rounds = Number(argv[++i]) || undefined;
-		else if (a === "--timeout") args.timeoutMs = Number(argv[++i]) || undefined;
+		else if (a === "--rounds" || a === "--timeout") {
+			const value = takeValue(argv, i);
+			const number = value === undefined ? NaN : Number(value);
+			if (value !== undefined) i++;
+			if (!Number.isSafeInteger(number) || number < 1 || number > (a === "--rounds" ? 4 : 1_800_000)) args.unknown.push(`${a} ${value ?? "(missing value)"}`);
+			else if (a === "--rounds") args.rounds = number;
+			else args.timeoutMs = number;
+		}
 		else if (a === "--backends") {
-			// Comma-separated, trimmed. Empty entries dropped so "codex,,claude"
-			// doesn't silently assign a blank backend to the critic.
-			const specs = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-			args.backends = specs.length > 0 ? specs : undefined;
+			const value = takeValue(argv, i);
+			if (value !== undefined) i++;
+			const specs = value?.split(",").map((s) => s.trim());
+			// Empty slots would shift persona assignments, not inherit Solo.
+			if (!specs?.length || specs.some((spec) => !spec)) args.unknown.push("--backends (missing or empty seat)");
+			else args.backends = specs;
 		}
 		else if (a === "--synthesizer" || a === "--advocate" || a === "--critic") {
 			const spec = takeValue(argv, i);
@@ -221,7 +270,9 @@ function parseInstallArgs(argv: string[], args: CliArgs): CliArgs {
 				continue;
 			}
 			i++;
-			args.install.agents.push(...value.split(",").map((s) => s.trim()).filter(Boolean));
+			const agents = value.split(",").map((s) => s.trim());
+			if (agents.some((agent) => !agent)) args.unknown.push("--agent (blank agent)");
+			else args.install.agents.push(...agents);
 		} else if (a === "--scope") {
 			const value = takeValue(argv, i);
 			if (value === undefined) {
@@ -232,12 +283,15 @@ function parseInstallArgs(argv: string[], args: CliArgs): CliArgs {
 			if (value === "project" || value === "global") args.install.scope = value;
 			else args.unknown.push(`--scope ${value}`);
 		} else if (a === "--with-hook") args.install.withHook = true;
-		else if (a === "--link") args.install.link = true;
+		else if (a === "--link" && args.command === "install") args.install.link = true;
+		else if (a === "--verify" && args.command === "install") args.install.verify = true;
 		else if (a === "-y" || a === "--yes") args.install.yes = true;
 		else if (a === "--dry-run") args.install.dryRun = true;
 		else args.unknown.push(a);
 	}
 
+	if (args.install.verify && (args.install.dryRun || args.install.yes || args.install.withHook || args.install.link))
+		args.unknown.push("--verify cannot be combined with --dry-run, --yes, --with-hook or --link");
 	// De-dupe so --agent codex --agent codex doesn't plan the same write twice.
 	args.install.agents = [...new Set(args.install.agents)];
 	return args;

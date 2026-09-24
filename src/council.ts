@@ -7,10 +7,11 @@
  * whoever replied.
  */
 
-import { callAdvisor, type BackendConfig, type BackendResult } from "./backend.js";
+import { advisorTransportError, callAdvisor, type BackendConfig, type BackendResult } from "./backend.js";
 import { DEFAULT_PERSONAS, SYNTHESIZER_PROMPT, type Persona } from "./personas.js";
-import { backendLabel, resolveSeatBackend, type SeatOptions } from "./detect.js";
+import { backendLabel, resolveSeatBackend, textOnlyImageWarning, type SeatOptions } from "./detect.js";
 import type { BpxCouncilConfig } from "./config.js";
+import { seatAttempt, type PlannedSeat, type SeatAttempt } from "./receipt.js";
 
 export interface CouncilInput {
 	question: string;
@@ -25,6 +26,8 @@ export interface CouncilInput {
 	synthesizer?: string;
 	/** Run-wide controls for explicitly selected seat backends. */
 	seatOptions?: SeatOptions;
+	onAttempt?: (attempt: SeatAttempt) => void;
+	onPlan?: (seats: PlannedSeat[]) => void;
 }
 
 export interface CouncilMember {
@@ -57,7 +60,19 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 		return { ok: false, error: "No backend configured." };
 	}
 
-	const personas = DEFAULT_PERSONAS;
+	const definitions = new Map(DEFAULT_PERSONAS.map((persona) => [persona.name, persona]));
+	for (const [name, definition] of Object.entries(config.personas ?? {})) {
+		definitions.set(name, { name, ...definition });
+	}
+	const names = config.council?.members ?? DEFAULT_PERSONAS.map((persona) => persona.name);
+	if (input.backends && input.backends.length > names.length) {
+		throw new Error(`--backends has ${input.backends.length} specs for ${names.length} council members`);
+	}
+	const personas = names.map((name) => {
+		const persona = definitions.get(name);
+		if (!persona) throw new Error(`Unknown council persona: ${name}`);
+		return persona;
+	});
 	const userMessage = context
 		? `=== Context ===\n${context}\n\n=== Question ===\n${question}`
 		: question;
@@ -73,6 +88,18 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 		return { persona, backend: resolved, label: backendLabel(resolved) };
 	});
 	const synthBackend = resolveSeatBackend(input.synthesizer ?? config.council?.synthesizer, backend, input.seatOptions);
+	// A later seat must not invalidate an image request after parallel calls start.
+	const routes = [...assigned.map((a) => a.backend), synthBackend];
+	for (const route of routes) {
+		const error = advisorTransportError(route);
+		if (error) throw new Error(error);
+	}
+	for (const route of new Map(routes.map((item) => [backendLabel(item), item])).values()) {
+		const warning = textOnlyImageWarning(route);
+		if (warning) note(warning);
+	}
+	input.onPlan?.([...assigned.map(({ persona }) => ({ seat: persona.name, round: null })),
+		{ seat: "synthesizer", round: null }]);
 
 	const distinct = new Set(assigned.map((a) => a.label));
 	note(
@@ -83,14 +110,21 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 
 	// Fan out — each persona gets its own call in parallel, on its own backend.
 	const memberResults = await Promise.allSettled(
-		assigned.map((a) => callCouncilMember(a.persona, userMessage, a.backend)),
+		assigned.map(async (a) => {
+			let result: BackendResult;
+			try { result = await callCouncilMember(a.persona, userMessage, a.backend); }
+			catch { result = { ok: false, text: "", error: "Advisor call failed unexpectedly" }; }
+			note(`── ${a.persona.name} (${a.label}) ${result.ok ? "answered" : "failed"}`);
+			return result;
+		}),
 	);
 
 	const members: CouncilMember[] = assigned.map((a, i) => {
 		const r = memberResults[i];
 		const base = { persona: a.persona.name, stance: a.persona.stance, model: a.label };
-		if (r.status === "fulfilled") return { ...base, ok: r.value.ok, text: r.value.text };
-		return { ...base, ok: false, text: "" };
+		const result: BackendResult = r.status === "fulfilled" ? r.value : { ok: false, text: "", error: "Advisor call failed unexpectedly" };
+		input.onAttempt?.(seatAttempt(a.persona.name, null, a.backend, result));
+		return { ...base, ok: result.ok, text: result.text };
 	});
 
 	for (const m of members) {
@@ -120,6 +154,7 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 	// Synthesize — one more call that merges the verdicts.
 	note(`── synthesizing verdict · ${backendLabel(synthBackend)} …`);
 	const synthResult = await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthBackend);
+	input.onAttempt?.(seatAttempt("synthesizer", null, synthBackend, synthResult));
 	note("");
 
 	if (!synthResult.ok) {

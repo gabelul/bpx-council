@@ -23,7 +23,7 @@ describe("callHttpAdvisor timeout", () => {
 		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
 		const result = await callHttpAdvisor("system", "question", backend, 9000);
 		expect(result.ok).toBe(false);
-		expect(result.error).toContain("network down");
+		expect(result.error).toBe("anthropic HTTP request failed");
 		expect(vi.getTimerCount()).toBe(0);
 	});
 

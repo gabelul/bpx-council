@@ -481,6 +481,12 @@ something" is worse than no test — it looks like coverage of the dangerous cas
 while pinning the dangerous behaviour in place. Run the damaging sequence
 end-to-end (here: twice) and diff the file against its original bytes.
 
+**Maintainer rule:** Before changing `templates/agents-md/AGENTS.md.snippet`, archive
+its exact released bytes as a recognised legacy snippet and keep install/uninstall
+ownership checks aligned. Otherwise existing installs become "unknown" blocks and
+cannot be updated or removed. Keep the current legacy fixture; don't overwrite
+history with the new wording.
+
 ---
 
 ## Atomic writes detached symlinks and widened permissions

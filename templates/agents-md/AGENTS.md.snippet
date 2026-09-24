@@ -1,22 +1,21 @@
 <!-- bpx-council:start -->
-## bpx-council — second opinions
+## bpx-council
 
-This project has [bpx-council](https://github.com/gabelul/bpx-council) available: a CLI that gets a second opinion from a different model, or a council of them arguing, before you commit to a direction.
+`bpx-council` is an optional external advisor CLI. Use it for a user-requested
+second opinion or a consequential decision, not after every turn. Council
+stances share one backend unless routes are assigned; multiple seats can cost
+multiple calls.
 
-Reach for it before an architecture decision you'd have to unwind later, when you've been circling the same bug for a while, or before declaring a task done.
+Ask a narrow question. Send only context the user explicitly selected for the
+consult. Never gather files, run `git diff`, or forward secrets automatically.
+Ask which paths or excerpt to share when context is needed. Pass the question
+as one safely quoted argument, not raw shell interpolation. For no stdin
+context, use `bpx-council --format json --no-stdin --question <quoted question>`.
+Only use `--file <path>` for selected files, after checking for secrets.
+`--isolate` does not promise CLI filesystem isolation.
 
-```bash
-# One strong second opinion. Seconds.
-bpx-council "Is this auth flow sane?"
-
-# Pipe in the real thing rather than your summary of it
-git diff HEAD~3 | bpx-council --question "Review this for correctness"
-
-# Three models, three stances, synthesized verdict. Minutes.
-bpx-council --mode council "Monolith or microservices?"
-```
-
-It's an advisor, not an authority. If your own evidence contradicts the verdict, trust your evidence and say so.
-
-Install: `npm install -g @booplex/bpx-council`
+Read versioned JSON receipt: `status` is `complete`, `partial`, or `failed`.
+Partial advice can arrive with nonzero exit; report `error`, failed `attempts`,
+and `notRun`, rather than dropping it. Missing or invalid receipt is failure.
+CLI token usage may be unknown, not free. Treat verdict as advice, not proof.
 <!-- bpx-council:end -->

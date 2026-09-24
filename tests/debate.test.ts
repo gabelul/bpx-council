@@ -11,7 +11,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const callAdvisor = vi.fn();
-vi.mock("../src/backend.js", () => ({
+vi.mock("../src/backend.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../src/backend.js")>()),
 	callAdvisor: (...args: unknown[]) => callAdvisor(...args),
 }));
 
@@ -79,6 +80,25 @@ describe("runDebate", () => {
 		await expect(runDebate({ question: "Q", config, rounds: 2,
 			critic: "opencode:critic", seatOptions: { images: ["/tmp/layout.png"] } }))
 			.rejects.toThrow("can't take images");
+		expect(callAdvisor).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ advocate: "codex", synthesizer: "codex", seat: "critic" },
+		{ advocate: "codex", critic: "codex", seat: "synthesizer" },
+	])("rejects image/custom-argv in $seat before any round", async ({ advocate, critic, synthesizer }) => {
+		const custom = { solo: { backend: {
+			type: "cli", command: "codex", args: ["exec", "--json", "-"],
+		} } } as never;
+		await expect(runDebate({ question: "Q", config: custom, rounds: 2,
+			advocate, critic, synthesizer, seatOptions: { images: ["/tmp/layout.png"] } }))
+			.rejects.toThrow("custom CLI args cannot safely attach images");
+		expect(callAdvisor).not.toHaveBeenCalled();
+	});
+
+	it.each(["openai", "google"])("rejects unsupported HTTP %s in critic before any round", async (provider) => {
+		await expect(runDebate({ question: "Q", config, rounds: 1, critic: provider }))
+			.rejects.toThrow(`HTTP backend for ${provider} not yet implemented`);
 		expect(callAdvisor).not.toHaveBeenCalled();
 	});
 

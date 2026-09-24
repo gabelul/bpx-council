@@ -125,6 +125,20 @@ describe("buildConfig", () => {
 		expect(cfg.solo.backend).toEqual({ type: "cli", command: "codex" });
 	});
 
+	it("preserves new config fields and backend-specific settings on headless-style edit", () => {
+		const existing: BpxCouncilConfig = { defaultMode: "council",
+			solo: { backend: { type: "cli", command: "codex", args: ["exec", "--json"], timeoutMs: 7000, isolate: true, model: "old" } },
+			personas: { reviewer: { stance: "against", systemPrompt: "Review release." } },
+			council: { members: ["reviewer", "architect"], backends: { reviewer: "claude" } },
+			gutCheck: { backend: "anthropic:claude-opus-4-8", maxOutputTokens: 90 },
+		};
+		const updated = buildConfig({ mode: "solo", soloSpec: "codex:new" }, existing);
+		expect(updated.solo.backend).toMatchObject({ command: "codex", args: ["exec", "--json"], timeoutMs: 7000, isolate: true, model: "new" });
+		expect(updated.personas).toEqual(existing.personas);
+		expect(updated.council?.members).toEqual(["reviewer", "architect"]);
+		expect(updated.gutCheck).toEqual(existing.gutCheck);
+	});
+
 	it("preserves independent seats when only the advisor or Council members change", () => {
 		const existing: BpxCouncilConfig = {
 			defaultMode: "debate", solo: { backend: { type: "cli", command: "codex" } },

@@ -6,9 +6,9 @@
  * with a description they match against, a slash command, an AGENTS.md block.
  * This module is the one place that knows where those files go for each host.
  *
- * Every host convention here was verified against a real installation rather
- * than inferred. Claude Code and Codex both read `skills/<name>/SKILL.md` with
- * `name` + `description` frontmatter, which is why one template feeds both.
+ * Claude Code, Codex, and OpenCode read host-specific skill paths. Codex and
+ * OpenCode also read project `.agents/skills`; duplicate destinations are
+ * removed when someone selects the shared option alongside a host.
  */
 
 import { existsSync } from "node:fs";
@@ -32,9 +32,8 @@ export type Scope = "project" | "global";
 /**
  * How a single template gets applied.
  *
- * The three non-copy kinds exist because two of the destinations are files the
- * user already owns — clobbering someone's settings.json to add one hook would
- * be a hostile way to install a second-opinion tool.
+ * Merge support stays for legacy hook detection/removal work; new installs
+ * only copy host-owned files and append the marked AGENTS.md block.
  */
 export type ActionKind =
 	/** Recursively copy a template directory (a skill and any support files). */
@@ -61,11 +60,7 @@ export interface InstallAction {
 	dest: string;
 	/** One line shown in the install plan, e.g. "skill (auto-triggers on 'second opinion')". */
 	label: string;
-	/**
-	 * Opt-in actions are skipped unless the user asks for them. The Stop hook
-	 * fires a council call after *every* turn — useful, but it costs a model
-	 * call each time and nobody should get that by accident.
-	 */
+	/** Retained for legacy installer action compatibility; no new hooks emitted. */
 	optIn?: boolean;
 	/**
 	 * link-dir only: absolute path to the canonical skill copy this destination
@@ -79,7 +74,7 @@ export interface AgentDef {
 	label: string;
 	/** True when this agent looks installed on the machine. */
 	detect: () => boolean;
-	/** Scopes this agent supports. Codex has no per-project skills dir. */
+	/** Scopes this agent supports. */
 	scopes: Scope[];
 	/** What to write for a given scope. `cwd` is the project root. */
 	actions: (scope: Scope, cwd: string) => InstallAction[];
@@ -111,56 +106,46 @@ export const AGENTS: AgentDef[] = [
 					dest: join(root, "commands", "council.md"),
 					label: "/council slash command",
 				},
-				{
-					kind: "merge-json",
-					source: "claude-code/hooks-settings.json",
-					dest: join(root, "settings.json"),
-					label: "Stop hook — gut-checks every turn (costs a model call each time)",
-					optIn: true,
-				},
 			];
 		},
 	},
 	{
 		id: "codex",
-		label: "Codex (global)",
-		// This entry covers Codex's *global* skills dir. Its project-scoped
-		// skills live in the shared `.agents/skills/` dir — see the
-		// "agents-skills" entry below, which reaches Codex-in-a-project along
-		// with the rest of that cluster.
+		label: "Codex",
 		detect: () => isOnPath("codex") || existsSync(join(homedir(), ".codex")),
-		scopes: ["global"],
-		actions: () => [
-			{
-				kind: "copy-dir",
-				source: "skills/bpx-council",
-				dest: join(homedir(), ".codex", "skills", "bpx-council"),
-				label: "skill — same format Claude Code uses",
-			},
-		],
+		scopes: ["project", "global"],
+		actions: (scope, cwd) => [{
+			kind: "copy-dir",
+			source: "skills/bpx-council",
+			dest: join(scope === "global" ? homedir() : cwd, ".agents", "skills", "bpx-council"),
+			label: "Codex skill",
+		}],
+	},
+	{
+		id: "opencode",
+		label: "OpenCode",
+		detect: () => isOnPath("opencode") || existsSync(join(homedir(), ".config", "opencode")),
+		scopes: ["project", "global"],
+		actions: (scope, cwd) => {
+			const root = scope === "global" ? join(homedir(), ".config", "opencode") : join(cwd, ".opencode");
+			return [
+				{ kind: "copy-dir", source: "skills/bpx-council", dest: join(root, "skills", "bpx-council"), label: "OpenCode skill" },
+				{ kind: "copy-file", source: "opencode/commands/council.md", dest: join(root, "commands", "council.md"), label: "/council command" },
+			];
+		},
 	},
 	{
 		id: "agents-skills",
-		label: "Shared skills dir — .agents/skills (Cursor, Codex, Gemini CLI, Copilot, OpenCode, Zed, …)",
-		// `.agents/skills/` is the emerging cross-agent convention for
-		// project-scoped skills: a single copy here is read by a whole cluster
-		// of agents instead of one. Reuses the exact same skill template as
-		// Claude Code and Codex.
-		//
-		// Project scope only. The *global* skills dirs are per-agent and
-		// fragmented (~/.cursor/skills, ~/.gemini/skills, ~/.copilot/skills, …)
-		// with no shared target, so there's nothing to write once at that level.
-		//
-		// The agent list is vercel-labs/skills' published path table, not
-		// something verified per-agent here — hence "convention", not a promise.
-		detect: () => ["cursor", "codex", "opencode", "gemini"].some(isOnPath),
+		label: "Shared project skill — .agents/skills (manual)",
+		// Optional compatibility path; never inferred from installed CLIs.
+		detect: () => false,
 		scopes: ["project"],
 		actions: (_scope, cwd) => [
 			{
 				kind: "copy-dir",
 				source: "skills/bpx-council",
 				dest: join(cwd, ".agents", "skills", "bpx-council"),
-				label: "skill — one copy, read by the whole .agents/skills cluster",
+				label: "shared project skill (host support varies)",
 			},
 		],
 	},

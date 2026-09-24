@@ -55,15 +55,17 @@ third member dying mid-run, and the council shipping without it.)
 
 ## Install
 
-Runs on a model CLI you probably already have, and **no API key**. If you're
-signed into `codex` or `claude`, it works with zero config.
+Signed into Codex or Claude CLI? Both can run without an API key. Codex runs
+in a read-only sandbox but can still read project files; Claude's preset disables
+tools. Anthropic HTTP works with `ANTHROPIC_API_KEY`. Other agent CLIs aren't
+auto-selected: choose one explicitly only if you trust its local configuration.
 
 ```bash
 npx @booplex/bpx-council "Is this auth flow sane?"
 ```
 
-No CLI on your PATH? Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` and it goes
-direct over HTTP instead. Once you like it:
+No CLI on your PATH? `ANTHROPIC_API_KEY` enables Anthropic HTTP. OpenAI HTTP
+isn't implemented yet; `OPENAI_API_KEY` alone won't select it. Once you like it:
 
 ```bash
 npm install -g @booplex/bpx-council
@@ -109,9 +111,10 @@ Assign different backends and it is:
 bpx-council --mode council --backends codex,claude "Should we ship this?"
 ```
 
-Backends map to personas in order. Fewer names than personas is fine, and the
-rest use the default. Each verdict is labelled with the model that produced it, so
-you can see who argued what.
+Backends map to personas in roster order. Fewer specs than members is fine; extra
+specs fail before any call. For each member, precedence is positional `--backends`,
+then saved `council.backends` by persona name, then Solo. Each verdict is labelled
+with its persona and model, so you can see who argued what.
 
 Pin a model per persona with `backend:model`:
 
@@ -147,6 +150,32 @@ Or save the choices in `~/.bpx-council.json`, by hand or through the wizard:
   }
 }
 ```
+
+Council's default roster stays architect, critic, simplifier. To change it, edit
+trusted global config (or an explicit trusted `--config` file):
+
+```json
+{
+  "personas": {
+    "reviewer": { "stance": "against", "systemPrompt": "Review deployment risks. Name specific failure modes." }
+  },
+  "council": {
+    "members": ["architect", "reviewer"],
+    "backends": { "reviewer": "claude" }
+  },
+  "gutCheck": { "backend": "anthropic:claude-opus-4-8", "maxOutputTokens": 96 }
+}
+```
+
+`personas` defines or replaces named prompts (stance: `for`, `against`, or
+`neutral`); definitions merge by name across trusted layers. `council.members`
+is an ordered, atomic list (1–8 unique safe names). Prompts must be nonblank
+and at most 8,000 characters. Define up to 16 persona entries. Gut-check
+uses explicit `--backend` first, then `gutCheck.backend`, then Solo; `null`
+resets it to Solo. `maxOutputTokens` (1–4096) sets Anthropic HTTP `max_tokens`.
+For a CLI route, it's only a prompt request, not a hard limit or billing cap.
+Findings are never cut after generation. The wizard preserves these advanced
+fields but doesn't edit them; use the JSON file.
 
 Each seat uses its explicit flag, then its saved spec, then the shared Solo
 backend. `--backend` and `--model` change that fallback, not pinned seats.
@@ -231,7 +260,7 @@ answering. So a second opinion asked inside a project shows up already following
 that project's house rules, which is some of the bias you were trying to escape
 by asking someone else.
 
-`--isolate` cuts that off:
+`--isolate` changes how supported presets load project instructions; it does not prevent a CLI from reading files:
 
 ```bash
 bpx-council --isolate "Is this auth flow actually sane, or are we just used to it?"
@@ -242,9 +271,9 @@ Tested by planting an instruction ("begin every reply with BANANA") in a repo's
 
 | Backend | What `--isolate` does |
 |---|---|
-| `codex` | fully suppresses `AGENTS.md` for that call |
-| `claude` | drops the project `CLAUDE.md`, and passes the advisor persona as a real system prompt instead of prepending it as text |
-| everything else | nothing, since they don't read your project files (crush was tested and ignores them) |
+| `codex` | sets `project_doc_max_bytes=0` to skip project `AGENTS.md`; it keeps the project working directory and can still read its files |
+| `claude` | drops the project `CLAUDE.md` from the preset's instruction path; user-global instructions may still apply |
+| everything else | no isolation guarantee; some CLIs may read project config |
 
 One honest limit: for claude this drops the project `CLAUDE.md` but **not** your
 user-global `~/.claude/CLAUDE.md`, which survives a system-prompt override.
@@ -258,8 +287,10 @@ want the outside view.
 
 ### Files and images
 
-Piping works for one blob of context. `--file` is better when there's more than
-one, and it labels each by name so the advisor can tell them apart:
+Piping works for one blob of context (up to 1MB). It waits for EOF, then fails
+if the pipe stays open past three seconds, even if no bytes arrived. Use
+`--no-stdin` when a calling harness keeps stdin open.
+`--file` is better when there's more than one, and it labels each by name:
 
 ```bash
 bpx-council --file src/auth.ts --file tests/auth.test.ts \
@@ -268,7 +299,7 @@ bpx-council --file src/auth.ts --file tests/auth.test.ts \
 
 Files are read and folded into the prompt, so **every backend supports this**.
 No special handling needed. Each file is fenced and labelled, and told plainly
-if it was truncated (256KB per file, 512KB total) so the model doesn't reason
+if it was truncated (256KB per file, 512KB total, at most 16 files) so the model doesn't reason
 about a function whose ending it never saw.
 
 Images are different, because a picture can't be folded into text. The backend
@@ -282,17 +313,20 @@ bpx-council --backend codex --image mock.png "Does this layout look off?"
 |---|---|---|
 | `codex` | ✓ | attached directly (`-i`), several at once |
 | `anthropic` | ✓ | inlined into the request as base64 |
-| `claude` | ✓ | no image flag; it opens the path itself with its own file tool |
+| `claude` | ✗ | tools are disabled; no verified direct image transport |
 | everything else | ✗ | refuses with a message naming the ones that work |
 
-The claude route is the weaker one: it depends on that tool's own file access,
-so if it declines to read you'd get a confident answer about an image it never
-saw. codex and anthropic hand the model actual pixels. With different Council
-or Debate backends, each seat must support images. Unsupported seats fail
-before any calls; capable seats receive the attachment or its path.
+Images must be regular, non-symlink files with matching magic bytes (four max,
+5MB each, 20MB combined). Anthropic HTTP gets the validated bytes frozen before
+the call. Codex CLI gets a validated **path**, not frozen bytes: another process
+could replace its contents before Codex opens it. Use Anthropic HTTP when that
+race matters. With `--image`, Council and Debate check each seat's image
+transport before any call. Image paths in config are rejected; pass them with
+`--image` so the CLI validates each file and freezes bytes for Anthropic HTTP.
 
-For codex, the catalog also says which models accept images, so pinning a
-text-only model with `--image` warns you before spending the call.
+For Codex, a pinned model that its catalog marks text-only triggers a warning
+before a call, including Council and Debate seats. An unknown catalog result
+isn't treated as proof of image support.
 
 Bad paths, directories, binary files passed to `--file`, and unsupported image
 types all fail immediately, before any model call rather than two minutes into a
@@ -332,7 +366,8 @@ bpx-council config --backend codex --model gpt-5.6-sol --mode solo --yes   # hea
 It merges into any existing config (your hand-set keys survive), and refuses
 rather than clobber a config it can't parse. Its Council setup includes the
 synthesizer; choosing Debate as default offers separate advocate, critic and
-synthesizer routes. Headless `config --yes` leaves saved seats alone. There's also a one-command
+synthesizer routes. Headless `config --yes` leaves saved seats, roster, persona
+prompts, gut-check settings, and backend-specific options alone. There's also a one-command
 onboarding that does both this and the agent wiring:
 
 ```bash
@@ -359,9 +394,24 @@ just
 means "this repo uses Opus, everything else stays my usual." Discovery walks up
 from your working directory to the git root, so it works from any subdirectory.
 
-Because the specs hold no secrets (API keys live in env), you can **commit
-`.bpx-council.json`**, and everyone on the team gets the same council with zero
-setup. An explicit `--config <path>` overrides discovery entirely.
+You can **commit `.bpx-council.json`** for shared mode and routes, but a repo
+isn't a trusted source of executable instructions. Auto-discovered project files
+can select Anthropic HTTP and its model; Council/Debate seats use Anthropic
+routes or `null` to inherit Solo. They cannot choose CLI commands (even Codex:
+its read-only sandbox still permits shell reads), tmux, HTTP URL or API-key
+variable. They may reorder or select bundled Council personas, but cannot
+supply persona prompts or select trusted custom personas. Project gut-check routes
+follow the same Anthropic-only rule; output-token preference is allowed.
+An invalid file fails with its path and key before any model call. Need a custom
+command or URL? Put it in your own global config or pass an explicit trusted
+`--config <path>`; either overrides/escapes project restrictions. Don't pass a
+repo-controlled file explicitly as a shortcut around this check.
+
+Upgrading from 1.8.0? A repo `.bpx-council.json` with CLI/tmux routes, custom
+URLs, or persona prompts that used to load will now fail validation. Move those
+choices to your global config or a trusted file passed with `--config`; keep the
+repo file within the Anthropic-only rules above. Run `bpx-council doctor` to
+check the resulting routes without paying for a call.
 
 ## Wiring it into your agent
 
@@ -380,100 +430,122 @@ for a yes before writing anything.
 
 | Agent | What it gets | Where |
 |---|---|---|
-| Claude Code | Skill (auto-triggers on "second opinion", "council", "gut check"), `/council` command, optional Stop hook | `.claude/` or `~/.claude/` |
-| Codex | Same skill, same format | `~/.codex/skills/` (global) |
-| Cursor, Codex, Gemini CLI, Copilot, OpenCode, Zed, … | Same skill via the shared `.agents/skills/` convention — one copy, read by the whole cluster | `.agents/skills/` (project) |
-| Anything that reads `AGENTS.md` | Instruction block | project root |
-| pi | [bpx-consult](https://github.com/gabelul/bpx-mono/tree/main/packages/bpx-consult) — deeper: auto-triggers, steer, interactive menu | — |
+| Claude Code | Skill and `/council` command | `.claude/` (project) or `~/.claude/` (global) |
+| Codex | Skill | `.agents/skills/` (project) or `~/.agents/skills/` (global) |
+| OpenCode | Skill and `/council` command | `.opencode/` (project) or `~/.config/opencode/` (global) |
+| Shared skill (manual choice only) | Compatibility copy for hosts that read project `.agents/skills/` | `.agents/skills/` |
+| Agents reading `AGENTS.md` | Instruction block | project root |
 
-`.agents/skills/` is an emerging cross-agent convention (it's the shared project
-path in [vercel-labs/skills](https://github.com/vercel-labs/skills)' agent
-table). One skill copy there reaches a whole cluster instead of one agent. The
-list above is that convention, not a per-agent guarantee. If your agent doesn't
-pick it up, the `AGENTS.md` block is the universal fallback.
-
-Two of those destinations are files you already own. `settings.json` gets a
-structural merge and `AGENTS.md` gets a marker-delimited block, so your existing
-hooks and house rules survive, and re-running updates in place instead of
-stacking duplicates. If either file is in a shape it doesn't recognise —
-unparseable JSON, a half-deleted block — it refuses and tells you, rather than
-guessing which text was yours. The skill and command files *are* replaced on
-reinstall; the plan marks those `[overwrite]` first.
+The shared option is never auto-detected. Select it explicitly if your host
+reads that path. Choosing it with Codex writes one skill, not two; choosing it (or Codex)
+with OpenCode keeps OpenCode's command but avoids a duplicate project skill.
+Older global
+Codex installs at `~/.codex/skills/bpx-council` are reported, not migrated or
+removed. `AGENTS.md` uses a marker-delimited block; malformed markers are
+refused rather than guessed at. Reinstall refreshes known files, but refuses
+skill directories with extra entries or foreign symlinks instead of claiming
+success. Clear drift manually; `[blocked]` in the plan names affected paths.
 
 Headless, for dotfiles and CI:
 
 ```bash
 bpx-council install --dry-run                              # show the plan, write nothing
 bpx-council install --agent claude-code --scope global -y
-bpx-council install --with-hook                            # + gut-check after every turn
 bpx-council install --link                                 # one canonical copy, symlinked
+bpx-council install --verify --agent claude-code            # offline artifact check
+bpx-council uninstall --agent claude-code --dry-run         # inspect removal
+bpx-council uninstall --agent claude-code --yes             # remove exact owned files
 ```
 
 **Link mode (`--link`).** By default each agent gets its own copy of the skill.
-With `--link`, one canonical copy lives at `.agents/skills/bpx-council` and every
-agent's skill dir is a symlink to it, so you edit once and they all see it. It's the same
+With `--link`, one canonical copy lives at `.agents/skills/bpx-council`;
+hosts needing a separate skill path link to it. Codex uses the canonical copy
+directly, and OpenCode can discover that shared copy without a second skill. It's the same
 scheme [vercel-labs/skills](https://github.com/vercel-labs/skills) uses. Copy is
 the default because symlinks are fragile across Windows, committed git trees, and
 Docker builds; on Windows link mode uses a junction, and any link that can't be
 made falls back to a copy automatically. An agent dir you've *edited* is never
 replaced by a link. It's left alone with a note.
 
-One caveat: a reinstall re-syncs the canonical copy from the bundled template, so
-hand-edits to `.agents/skills/bpx-council` itself don't survive an upgrade. It's
-a distribution point, not a place to fork the skill.
+One caveat: reinstall refreshes known files at the canonical path. Extra
+entries or links block reinstall, and `--verify` reports edited content as
+`drifted`. Treat the canonical copy as a distribution point, not a fork.
 
-The Stop hook is opt-in because it fires a council call on every turn, and
-that's a model call every turn. Worth it sometimes, not by default.
+`--with-hook` now fails without writing: an every-Stop paid consult was too easy
+to trigger without a deliberate question. Existing hooks aren't removed by
+install. `uninstall` removes only an exact bundled legacy Stop entry, leaving
+unrelated hooks and settings alone. Edited or malformed entries are refused.
 
-Everything's a CLI underneath, so if your agent isn't on that list it can still
-just run `bpx-council` in a shell. The templates live in `templates/` if you'd
+`uninstall` uses the same agent and scope selection. Dry-run never prompts;
+noninteractive mutation needs `--yes`. It removes only template-identical files
+and skill trees with no extras, or links to the canonical copy. Marker blocks
+must match the current or bundled legacy text exactly. Edited artifacts stay
+put and produce a nonzero result; other owned artifacts can still be removed.
+A link-only uninstall leaves the real `.agents/skills` copy in place, since
+Codex or another host may use it without a link. When it is the last link,
+the command exits nonzero and names the retained copy; explicitly select
+`codex` or `agents-skills` to remove it. `--verify` reports missing, drifted,
+or current per selected host without authentication or a model call; binary
+availability isn't checked.
+
+This integration installs instructions and commands; it doesn't add native host
+execution or host-harness cost tracking. Consult receipts report provider usage
+where available, with unknown CLI usage marked unknown. If your agent isn't on
+the list, it can still run `bpx-council` in a shell. The templates live in `templates/` if you'd
 rather place them yourself.
 
-## Which backends actually work
+## Backend support
 
-Every one of these was run for real: a genuine question, a four-minute timeout,
-through the same code path a consult uses. Here's what actually came
-back:
+The automatic routes are Anthropic HTTP (when `ANTHROPIC_API_KEY` is set),
+then Codex CLI, then Claude CLI. Codex uses a read-only sandbox, which still
+allows project-file reads; Claude's preset disables tools. OpenCode's explicit
+CLI route runs with tools denied and accepts only its JSON event output. Other
+CLI commands require a trusted global or explicit config. A custom command's
+permissions and output format are yours to check, not something the name
+`bpx-council` magically fixes.
 
-| Backend | Headless call | Model flag | Lists models | Status |
-|---|---|---|---|---|
-| `codex` | `exec` (stdin) | `--model` | `codex debug models` | ✅ verified |
-| `claude` | `-p` (stdin) | `--model` | — | ✅ verified |
-| `crush` | `run` | `-m` | `crush models` | ✅ verified — answered cleanly |
-| `cursor-agent` | `-p` | `--model` | `cursor-agent models` | ⚙️ runs, then asks for `cursor-agent login` or `CURSOR_API_KEY` |
-| `gemini` | `-p` | `-m` | — | ⚙️ reaches Google, which has EOL'd this CLI for the individual tier |
-| `qwen` | `-p` | `-m` | — | ⚙️ reaches Alibaba, which returns `401 Incorrect API key` |
-| `opencode` | `run` (stdin) | `--model` | `opencode models` | ⚙️ runs, then its own server returns `UnknownError` |
-| `amp` | `-x` | — (picks its own) | — | ⚠️ agentic — blocks on permission prompts; **not recommended as an advisor** |
+Only Anthropic HTTP is implemented. OpenAI and Google HTTP config values fail
+before any request; use a supported CLI or Anthropic route instead. The
+Anthropic default model is `claude-opus-4-8`. Earlier backend probes used
+older presets, so they don't establish that these revised routes are logged in
+or working on your machine. `doctor` checks availability without a model call;
+`doctor --probe` makes one explicitly requested smoke call. Authenticated
+multi-seat runs still need checking in the target environment.
 
-The ⚙️ ones aren't broken wiring. Every one of them accepted the arguments, spawned,
-and got as far as its *own* auth or server layer before failing. A login it wants,
-an account tier Google retired, an API key that isn't valid, a server having a bad
-day. Fix the thing it's asking for and it works. That column exists so you know
-which side of the line a problem is on before you go looking. `amp` is
-the exception worth calling out: it's an *executing* agent, and its only
-non-interactive mode is `--dangerously-allow-all` (runs any command without
-asking). A second opinion shouldn't be able to run commands on your machine, so
-bpx-council deliberately doesn't pass that, which means `amp` blocks on its
-permission prompt. Use it only if you know what you want from it.
+## Doctor
 
-Any backend that can't enumerate its models gives you a free-text field instead
-of the picker. A binary that isn't in this list still works as a custom CLI
-backend, where bpx-council pipes the prompt to its stdin and puts `--model` up
-front.
+`bpx-council doctor` checks config and effective Solo, Gut-check, Council and
+Debate routes without running an advisor, fetching models, or testing login.
+It reports whether a binary exists or an API key is present; neither proves
+that the account works. Invalid project config and trust restrictions fail with
+a diagnostic before any call.
 
-Of the HTTP backends only `anthropic` is implemented (needs `ANTHROPIC_API_KEY`);
-`openai`/`google` over HTTP aren't yet, so for OpenAI models use the `codex`
-backend. The HTTP default model is `claude-opus-4-8`.
+```bash
+bpx-council doctor                    # offline, no model call
+bpx-council doctor --config ./my.json # inspect a trusted config, no discovery
+bpx-council doctor --probe            # explicit ONE-call Solo smoke test
+```
+
+`--probe` prints selected route and possible charge *before* calling. It uses a
+fixed tiny prompt, 10-second deadline, 8 KiB CLI stdout cap or 32 Anthropic
+HTTP output tokens, and prints only success/failure, never the reply. It cannot
+fan out into Council or Debate. Only read-only Codex, tool-disabled Claude,
+and the standard Anthropic HTTP endpoint are probed; tmux, custom commands/args,
+custom endpoints and unimplemented HTTP providers are refused. Configured
+image paths are not sent. A parseable reply doesn't independently verify login
+or model selection. Offline diagnostics exit nonzero for unavailable routes.
+Other consult/install/config flags are not accepted by `doctor`.
 
 ## Options
 
 ```
 -m, --mode <mode>     solo | council | debate | gut-check (saved default if omitted)
+    --format json     Consult only: one JSON receipt on stdout, even on failure
 -q, --question <q>    The question (or pass it positionally)
-    --isolate         Ignore the project's AGENTS.md / CLAUDE.md
+    --isolate         Skip project instructions in supported Codex/Claude presets; not a filesystem sandbox
+    --no-stdin        Don't wait for piped input (for harnesses that keep stdin open)
 -f, --file <path>     Attach a text file as context (repeatable)
-    --image <path>    Attach an image (repeatable; codex, anthropic, claude)
+    --image <path>    Attach an image (repeatable; codex, anthropic)
 -b, --backend <name>  Force one backend (also: tmux | pty | interactive)
     --backends <a,b>  Council: one backend per persona, in order
     --synthesizer <s> Council/Debate verdict backend[:model][@effort]
@@ -487,7 +559,19 @@ backend. The HTTP default model is `claude-opus-4-8`.
 ```
 
 Resolution order for backends: `--backend` → config → `*_API_KEY` env vars →
-CLIs on your PATH → `codex`.
+Codex or Claude CLI on your PATH → error if neither is available.
+
+`--format json` emits one schemaVersion 1 object with an invocation UUID, resolved
+mode (or `null`), status (`complete`, `partial`, `failed`), advice, error, ordered
+seat attempts, planned seats, skipped (`notRun`) seats, and usage coverage.
+Each attempt records selected route, label, pinned model/effort, round, outcome,
+and provider-reported tokens when available. `usage.attempted/reported/unknown`
+count calls, never skipped seats. Input/output totals are `null` until a call
+reports them; Anthropic cache creation/read tokens stay separate with per-field
+report counts. CLI usage stays unknown. Council can return `partial` with exit
+code 0 when synthesis succeeds despite a failed member; incomplete verdicts keep
+nonzero exit codes and salvage completed answers. Progress stays on stderr. Config,
+setup, and install do not accept JSON mode.
 
 ## Updating
 
@@ -499,7 +583,11 @@ bpx-council install                          # re-run to refresh the agent files
 Two steps on purpose. Updating the npm package **doesn't** touch your agent
 files. Nothing writes into `~/.claude` or `AGENTS.md` behind your back on an
 `npm install`. Re-run `bpx-council install` to pull in new or changed skills; it's
-idempotent, so running it again is safe.
+idempotent for known, unedited files; it refuses drift rather than overwriting
+it. This does **not** migrate an older Codex skill at
+`~/.codex/skills/bpx-council`. The installer reports that path but creates the
+new skill under `~/.agents/skills/bpx-council`. Check which one your host reads
+before removing the old copy yourself; `uninstall` won't remove that legacy path.
 
 `bpx-council --version` shows what you've got. The CLI also checks for a newer
 version at most once a day and prints a one-line notice on **stderr** (so it

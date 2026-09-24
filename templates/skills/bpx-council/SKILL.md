@@ -1,86 +1,46 @@
 ---
 name: bpx-council
 description: >
-  Get a second opinion from a stronger model, or a multi-model council that
-  argues, before committing to a direction. Use when facing an architecture
-  decision, weighing two approaches, stuck on a bug you've been circling, or
-  about to declare something done. Also use when the user says "second
-  opinion", "council", "gut check", "am I overthinking this", "sanity check
-  this", "what would another model say", or asks whether an approach is sound.
+  Ask an external advisor for a second opinion when the user requests one, or
+  when a consequential decision needs an independent check. Use only for the
+  specific question at hand; never launch a consult after every turn.
 ---
 
-# bpx-council — a second opinion on the calls that matter
+# bpx-council
 
-You run on one model. That model has one set of instincts, and asking it the
-same question three times gets you the same instincts three times. `bpx-council`
-puts a different model — or three of them, disagreeing — on the handful of
-decisions that actually determine how the thing turns out.
+Use the installed `bpx-council` CLI for an advisory call. It is not a native
+host tool: the host runs an external process, which may call paid providers.
+Do not call it automatically after every turn.
 
-## Modes
+Pick one mode for the question: `solo` (default) for a second opinion,
+`gut-check` for a brief reaction, `council` for parallel stances and a
+synthesized verdict, or `debate` for sequential opposing rounds. Council
+personas share a backend unless routes are assigned separately; don't call
+that multi-model by default. Larger modes can make several paid calls.
 
-**Solo** (default) — one strong second opinion. Seconds.
+Ask a narrow question. Include only context the user selected or authorized
+for this consult. Don't read or send a repository, file, diff, chat history,
+secrets, or images merely because they are available. Never run `git diff`
+automatically. If context is necessary but not specified, ask which paths or
+excerpt to share. An explicitly chosen text file can be passed with
+`--file <path>`; check it for secrets first. `--isolate` changes certain
+backend project-instruction behavior, not filesystem access or CLI sandboxing.
 
-```bash
-bpx-council "Is this auth flow sane?"
+Pass question as one argument using the host's safe argv execution if
+available. With a shell tool, quote/escape it as shell data; never place raw
+user text or `$ARGUMENTS` into a command string. Use `--no-stdin` when no
+explicitly selected stdin context exists, avoiding inherited open pipes.
+For a machine-readable result, run:
+
+```text
+bpx-council --format json --no-stdin --question <one safely quoted question argument>
 ```
 
-**Gut check** — terse. For "does this smell off?" without a full writeup.
-
-```bash
-bpx-council --mode gut-check "We're storing sessions in localStorage"
-```
-
-**Council** — three personas in parallel (architect, critic, simplifier), then a
-synthesized verdict. Minutes, not seconds. For real decisions.
-
-```bash
-bpx-council --mode council "Monolith or microservices for this service?"
-```
-
-**Debate** — advocate vs critic over sequential rounds, then a verdict. For
-contentious calls where you want the strongest case on both sides.
-
-```bash
-bpx-council --mode debate --rounds 2 "Rewrite the parser, or patch it?"
-```
-
-## Feeding it context
-
-Pipe anything on stdin and it gets prepended to the question. This matters —
-an advisor reasoning about the actual diff beats one reasoning about your
-summary of the diff.
-
-```bash
-git diff HEAD~3 | bpx-council --question "Review this for correctness"
-cat src/auth.ts | bpx-council --question "Any security holes here?"
-```
-
-## Going genuinely multi-model
-
-By default all three council personas share one backend: three stances, one
-model. Assign different backends and you get actually different instincts.
-
-```bash
-bpx-council --mode council --backends codex,claude "Should we ship this?"
-```
-
-Backends map to personas in order. Each verdict is labelled with the model that
-produced it, so you can see who argued what.
-
-## When to reach for it
-
-- Before an architecture decision you'd have to unwind later
-- When you've been circling the same bug for a while
-- Before declaring a task done — a final review pass
-- When the user is asking you to pick between two approaches and you don't have
-  a strong reason for either
-
-## How to treat the answer
-
-It's an advisor, not an authority. Take it seriously — a different model
-catching something you missed is the entire point. But if your own evidence
-contradicts it, trust your evidence and say so. Don't launder a council verdict
-into certainty you don't have.
-
-Progress goes to stderr and the verdict to stdout, so `> out.md` captures clean
-output.
+Read JSON receipt (`schemaVersion: 1`). Check `status` (`complete`,
+`partial`, `failed`), `advice`, `error`, `attempts`, `notRun`, and `usage`.
+Nonzero exit may still carry a `partial` receipt with useful advice; don't
+discard stdout on failure. Treat `failed` or missing/invalid receipt as no
+verdict, report error, and don't silently retry paid calls. Token usage is
+provider-reported where available; unknown CLI usage is not zero cost.
+Use advisor output as evidence to consider, not authority. Say when local
+facts contradict it.

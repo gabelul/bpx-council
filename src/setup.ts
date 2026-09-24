@@ -28,7 +28,7 @@ export async function runSetup(opts: ConfigOptions): Promise<number> {
 	if (configCode !== 0) return configCode;
 
 	// Offer the agent installer, only when we can actually prompt.
-	if (process.stdin.isTTY === true && !opts.yes) {
+	if (process.stdin.isTTY === true && !opts.yes && !opts.dryRun) {
 		const rl = createInterface({ input: process.stdin, output: process.stdout });
 		let wire = false;
 		try {

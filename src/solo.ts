@@ -4,11 +4,16 @@
 
 import { callAdvisor, type BackendConfig } from "./backend.js";
 import type { BpxCouncilConfig } from "./config.js";
+import { seatAttempt, type SeatAttempt } from "./receipt.js";
 
 export interface SoloInput {
 	question: string;
 	context?: string;
 	config: BpxCouncilConfig;
+	onAttempt?: (attempt: SeatAttempt) => void;
+	/** Resolved gut-check route, independent of the Solo default. */
+	backend?: BackendConfig;
+	seat?: string;
 }
 
 export type SoloResult = { ok: true; text: string } | { ok: false; error: string };
@@ -20,7 +25,7 @@ const ADVISOR_SYSTEM_PROMPT =
 
 export async function runSolo(input: SoloInput): Promise<SoloResult> {
 	const { question, context, config } = input;
-	const backend = (config.solo.backend ?? undefined) as BackendConfig | undefined;
+	const backend = input.backend ?? (config.solo.backend as BackendConfig | undefined);
 
 	if (!backend) {
 		return { ok: false, error: "No backend configured for the solo advisor." };
@@ -31,6 +36,7 @@ export async function runSolo(input: SoloInput): Promise<SoloResult> {
 		: question;
 
 	const result = await callAdvisor(ADVISOR_SYSTEM_PROMPT, userMessage, backend);
+	input.onAttempt?.(seatAttempt(input.seat ?? "advisor", null, backend, result));
 	return result.ok
 		? { ok: true, text: result.text }
 		: { ok: false, error: result.error ?? "unknown error" };

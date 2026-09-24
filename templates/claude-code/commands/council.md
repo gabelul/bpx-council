@@ -1,20 +1,25 @@
 ---
-description: Run a bpx-council consult and include the verdict
+description: Ask bpx-council for an external second opinion on the supplied question
+argument-hint: <question>
 ---
 
-Run a council consult on the user's question and report the verdict.
+Use this command only for the user's supplied question: $ARGUMENTS
 
-```bash
-bpx-council "$ARGUMENTS"
-```
+If no question was supplied, ask for one. Don't collect repository context,
+run `git diff`, or read files unless the user explicitly selected them for
+this consult. Don't forward secrets. Pick solo by default; use council or
+debate only when user requested it or the question warrants multiple paid
+calls. Council stances aren't separate models unless separately routed.
 
-If the question is an architecture or two-way decision rather than a quick
-sanity check, use the full council instead — three models, three stances,
-synthesized verdict:
+Call `bpx-council --format json --no-stdin --question` with question as ONE
+shell-escaped argument (or use a tool's argv array). `$ARGUMENTS` above is
+prompt data, NOT shell code: never interpolate it unquoted into a shell
+command. If user selected files, inspect them for secrets, then add explicit
+`--file` arguments. Do not claim `--isolate` prevents CLI filesystem reads.
 
-```bash
-bpx-council --mode council "$ARGUMENTS"
-```
-
-Treat the result as advice, not a ruling. If your own evidence contradicts it,
-say so rather than deferring.
+Parse stdout as versioned JSON receipt. `status: complete` has full advice;
+`partial` may have advice despite nonzero exit; `failed` has no verdict. Show
+error and which seats failed or didn't run. If receipt missing or invalid,
+report CLI failure rather than inventing advice. Usage fields are reported
+usage, not guaranteed total cost. Don't retry a failed paid call without
+user direction. Treat verdict as advice, not a ruling.
