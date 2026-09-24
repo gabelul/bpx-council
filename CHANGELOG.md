@@ -12,6 +12,12 @@
 * add explicit host wiring and bounded advisor receipts ([e566403](https://github.com/gabelul/bpx-council/commit/e566403a3eb70cad66801a3cedafe462202a0f21))
 * route Council and Debate seats independently ([41b622b](https://github.com/gabelul/bpx-council/commit/41b622b81c3462b9302348946570166ea9805424))
 
+### Operational changes
+
+* `doctor` checks routes offline; `doctor --probe` makes one explicit smoke call.
+* Host install, verification, and removal now check ownership and refuse edited files rather than overwriting them.
+* JSON receipts report per-seat failures and usage, including partial Council and Debate results. `--no-stdin` avoids waiting on a harness that keeps stdin open.
+
 ## [1.9.0](https://github.com/gabelul/bpx-council/compare/v1.8.0...v1.9.0) (2026-08-09)
 
 
