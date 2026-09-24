@@ -2,9 +2,11 @@
 
 ## [1.9.0](https://github.com/gabelul/bpx-council/compare/v1.8.0...v1.9.0) (2026-08-09)
 
+
 ### Features
 
 * add --isolate to ignore the project's agent instructions ([d49c2ce](https://github.com/gabelul/bpx-council/commit/d49c2ce8e77ed04853eb6e1c7b2c60d2c54ee030))
+
 
 ### Bug Fixes
 
