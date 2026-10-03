@@ -2,6 +2,27 @@
 
 ## [2.1.0](https://github.com/gabelul/bpx-council/compare/v2.0.0...v2.1.0) (2026-10-03)
 
+### Configuration, minus the guided tour
+
+The old config wizard was too basic for the tool I'd built around it. I wanted to change a setting without going through setup again, so I rebuilt `bpx-council config` as a settings hub.
+
+You can see what's configured and edit Advisor, Gut-check, Council, Debate, or the default mode separately. Picking Solo doesn't hide the other routes. Changing a model shouldn't mean revisiting every decision you've already made.
+
+Model lists are searchable and load when you ask for them. You can enter an ID manually, and saved models stay selectable even when discovery can't find them. A missing catalog entry isn't permission to replace your choice.
+
+Edits stay in a draft. Review them, go back if something looks wrong, then save once. Discard or Ctrl-C leaves the file untouched. Settings you didn't edit, including custom arguments and timeouts, stay put.
+
+I also fixed the HOME config bug: running from your home directory no longer treats your global config as an untrusted project file. The wizard now refuses inferred project saves that would overwrite that same global file, including through a directory alias.
+
+Explicit Advisor backend, model, or effort changes also clear the old reasoning fallback. Because apparently deleting one setting wasn't enough to stop it coming back.
+
+```bash
+bpx-council config
+```
+
+---
+
+Verification: 511 tests and six real terminal scenarios passed. Changes apply to the standalone bpx-council CLI; bpx-consult is unchanged.
 
 ### Features
 
