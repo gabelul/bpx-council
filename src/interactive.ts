@@ -47,12 +47,14 @@ export function runKeyLoop<T>(
 	handle: (str: string | undefined, key: Key | undefined, ctx: KeyCtx<T>) => void,
 	opts?: RunOpts,
 ): Promise<T | null> {
-	return new Promise((resolve) => {
+	return new Promise((resolve, reject) => {
 		const input = process.stdin;
 		const out = process.stderr;
 
 		emitKeypressEvents(input);
 		let raw = false;
+		const previousRaw = input.isRaw === true;
+		let settled = false;
 		try {
 			input.setRawMode(true);
 			raw = true;
@@ -73,10 +75,12 @@ export function runKeyLoop<T>(
 		};
 
 		const cleanup = () => {
+			if (settled) return;
+			settled = true;
 			input.removeListener("keypress", onKey);
 			if (raw) {
 				try {
-					input.setRawMode(false);
+					input.setRawMode(previousRaw);
 				} catch {
 					// Best-effort — nothing more we can do.
 				}
@@ -94,6 +98,7 @@ export function runKeyLoop<T>(
 		const ctx: KeyCtx<T> = {
 			redraw,
 			done(value) {
+				if (settled) return;
 				cleanup();
 				resolve(value);
 			},
@@ -104,11 +109,21 @@ export function runKeyLoop<T>(
 				cleanup();
 				process.exit(130);
 			}
-			handle(str, key, ctx);
+			try {
+				handle(str, key, ctx);
+			} catch (error) {
+				cleanup();
+				reject(error);
+			}
 		};
 
 		input.on("keypress", onKey);
-		redraw();
+		try {
+			redraw();
+		} catch (error) {
+			cleanup();
+			reject(error);
+		}
 	});
 }
 

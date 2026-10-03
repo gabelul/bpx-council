@@ -57,16 +57,17 @@ function headerLines(header: string, width: number): string[] {
 }
 
 /** Render the single-select list, cursor row highlighted. */
-export function renderSelect(options: SelectOption[], cursor: number, header: string, width = 80): string {
+export function renderSelect(options: SelectOption[], cursor: number, header: string, width = 80, maxRows = options.length): string {
 	const labelWidth = Math.max(4, width - 4); // prefix "  ❯ " is 4 columns
 	const lines = headerLines(header, width);
-	options.forEach((option, i) => {
-		const atCursor = i === cursor;
+	const start = Math.max(0, Math.min(cursor - Math.floor(maxRows / 2), options.length - maxRows));
+	options.slice(start, start + maxRows).forEach((option, row) => {
+		const atCursor = start + row === cursor;
 		const pointer = atCursor ? cyan("❯") : " ";
 
 		// Each piece is measured on its plain text and coloured afterwards —
 		// clip() counts raw characters, so styling first would corrupt the widths.
-		const name = clip(option.label, Math.min(labelWidth, 22));
+		const name = clip(option.label, Math.min(labelWidth, option.hint || option.kind ? 22 : labelWidth));
 		const badge = option.kind ?? "";
 		const spent = name.length + (badge ? badge.length + 2 : 0) + 4;
 		const room = Math.max(0, width - spent - 2);
@@ -78,6 +79,7 @@ export function renderSelect(options: SelectOption[], cursor: number, header: st
 		const hintPart = hintText ? ` ${hint(hintText)}` : "";
 		lines.push(`  ${pointer} ${shown}${badgePart}${hintPart}`);
 	});
+	if (options.length > maxRows) lines.push(dim(clip(`    … ${options.length} choices`, width)));
 	lines.push("");
 	lines.push(dim(clip("  ↑↓ move · enter select · esc cancel", width)));
 	return `${lines.join("\n")}\n`;
@@ -92,7 +94,11 @@ export function runSelect(header: string, options: SelectOption[], initial = 0, 
 	let cursor = Math.min(Math.max(0, initial), Math.max(0, n - 1));
 	const { wrap, run } = styled(style);
 	return runKeyLoop<string>(
-		() => wrap(renderSelect(options, cursor, header, process.stderr.columns || 80)),
+		() => {
+			const width = Math.max(1, (process.stderr.columns || 80) - (style?.rail ? 3 : 0));
+			const rows = Math.max(1, (process.stderr.rows || 24) - header.split("\n").length - 4);
+			return wrap(renderSelect(options, cursor, header, width, rows));
+		},
 		(_str, key, ctx) => {
 			if (!key) return;
 			if (key.name === "escape" || key.name === "q") return ctx.done(null);
@@ -107,27 +113,32 @@ export function runSelect(header: string, options: SelectOption[], initial = 0, 
 }
 
 /** Render a single-line text input with a cursor and a default hint. */
-export function renderInput(header: string, value: string, def: string, width = 80): string {
-	const hint = !value && def ? `  ${dim(`(default: ${def})`)}` : "";
+export function renderInput(header: string, value: string, def: string, width = 80, cancel = false): string {
+	const hint = !value && def ? `  (default: ${def})` : "";
 	const lines = headerLines(header, width);
-	lines.push(`  ${cyan("›")} ${clip(value, Math.max(4, width - 6))}${dim("▏")}${hint}`);
+	lines.push(`  ${cyan("›")} ${clip(`${value}▏${hint}`, Math.max(0, width - 4))}`);
 	lines.push("");
-	lines.push(dim(clip("  type · enter accept · esc default", width)));
+	lines.push(dim(clip(`  type · enter accept · esc ${cancel ? "cancel" : "default"}`, width)));
 	return `${lines.join("\n")}\n`;
 }
 
 /**
- * A single-line text field. Enter (or an empty enter) accepts the typed value or
- * the default; escape takes the default. Always resolves a string.
+ * A single-line text field. Enter accepts typed value or supplied default.
+ * @param header Prompt text.
+ * @param def Value used for empty Enter and legacy Escape.
+ * @param style Rail styling; `cancel: true` makes Escape return null.
+ * @returns Accepted text, or null on cancellation when explicitly enabled.
  */
-export function runInput(header: string, def = "", style?: PickerStyle): Promise<string> {
+export function runInput(header: string, def: string, style: PickerStyle & { cancel: true }): Promise<string | null>;
+export function runInput(header: string, def?: string, style?: PickerStyle): Promise<string>;
+export function runInput(header: string, def = "", style?: PickerStyle & { cancel?: boolean }): Promise<string | null> {
 	let value = "";
 	const { wrap, run } = styled(style);
 	return runKeyLoop<string>(
-		() => wrap(renderInput(header, value, def, process.stderr.columns || 80)),
+		() => wrap(renderInput(header, value, def, (process.stderr.columns || 80) - (style?.rail ? 3 : 0), style?.cancel)),
 		(str, key, ctx) => {
 			if (!key) return;
-			if (key.name === "escape") return ctx.done(def);
+			if (key.name === "escape") return ctx.done(style?.cancel ? null : def);
 			if (key.name === "return" || key.name === "enter") return ctx.done(value.trim() || def);
 			if (key.name === "backspace") value = value.slice(0, -1);
 			else if (str && str.length === 1 && str.charCodeAt(0) >= 32 && !key.ctrl && !key.meta) value += str;
@@ -135,7 +146,7 @@ export function runInput(header: string, def = "", style?: PickerStyle): Promise
 			ctx.redraw();
 		},
 		run,
-	).then((v) => v ?? def);
+	).then((v) => style?.cancel ? v : v ?? def);
 }
 
 /**
@@ -215,15 +226,22 @@ export function renderFilter(
  *
  * Resolves the highlighted match on enter; with `allowCustom`, enter on a query
  * that matches nothing returns the query itself (so you can name a model that
- * isn't in the list). Escape resolves null — "skip, use the default".
+ * isn't in the list). Escape resolves null; caller decides whether to keep or default.
+ * @param header Prompt text.
+ * @param items Searchable choices in display order.
+ * @param opts Rail style, custom-entry support, initial cursor and cancellation hint.
+ * @returns Highlighted choice, custom query when allowed, or null on Escape.
  */
-export function runFilterSelect(header: string, items: string[], opts?: { allowCustom?: boolean } & PickerStyle): Promise<string | null> {
+export function runFilterSelect(header: string, items: string[], opts?: { allowCustom?: boolean; initial?: number; cancelLabel?: string } & PickerStyle): Promise<string | null> {
 	let query = "";
-	let cursor = 0;
-	const maxRows = 8;
+	let cursor = Math.max(0, Math.min(opts?.initial ?? 0, items.length - 1));
 	const { wrap, run } = styled(opts);
 	return runKeyLoop<string>(
-		() => wrap(renderFilter(header, query, filterItems(items, query), cursor, maxRows, process.stderr.columns || 80)),
+		() => {
+			const rows = Math.max(1, Math.min(8, (process.stderr.rows || 24) - header.split("\n").length - 5));
+			const block = renderFilter(header, query, filterItems(items, query), cursor, rows, (process.stderr.columns || 80) - (opts?.rail ? 3 : 0));
+			return wrap(opts?.cancelLabel ? block.replace("esc skip (use default)", `esc ${opts.cancelLabel}`) : block);
+		},
 		(str, key, ctx) => {
 			if (!key) return;
 			const matches = filterItems(items, query);

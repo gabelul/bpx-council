@@ -15,10 +15,12 @@ import { MODES, type Mode } from "./args.js";
 import { type BackendConfig, type BpxCouncilConfig, type DebateConfig, configPath, projectConfigWritePath } from "./config.js";
 import { availableBackends, parseBackendArg, type AvailableBackend } from "./detect.js";
 import { validateConfig } from "./config-validation.js";
+import { editConfig, type EditorPickers } from "./config-editor.js";
+import { projectTargetIsGlobal } from "./config-target.js";
 import { listEfforts, listModels } from "./models-list.js";
 import { printStarNudge } from "./nudge.js";
 import { BAR, railIntro, railNote, railOutro, railStep } from "./rail.js";
-import { runConfirm, runFilterSelect, runInput, runSelect, type SelectOption } from "./select.js";
+import { runFilterSelect, runInput, runSelect, type SelectOption } from "./select.js";
 import { bold, cyan, dim, green, red, yellow } from "./style.js";
 import { kindBadge, label as themeLabel, MODE_HINTS, modeTone, value as themeValue } from "./theme.js";
 
@@ -186,14 +188,15 @@ function currentBackendName(existing: BpxCouncilConfig | undefined, available: A
 }
 
 function printPlan(path: string, config: BpxCouncilConfig, rail = false): void {
-	const b = config.solo.backend;
+	const b = config.solo?.backend;
+	const mode = config.defaultMode ?? "solo";
 	const model = b?.model ? `  ${themeValue(b.model)}` : dim("  (its own default)");
 	const kind = b?.type === "http" || b?.type === "cli" ? ` ${kindBadge(b.type)}` : "";
 	const effort = b?.effort ? `  ${dim("effort")} ${themeValue(b.effort)}` : "";
 	const label = `${b?.type === "http" ? b.provider : (b?.command ?? "auto-detect")}${kind}${model}${effort}`;
 
 	const rows = [
-		`${themeLabel("mode")}     ${modeTone(config.defaultMode)(config.defaultMode)}  ${dim(MODE_HINTS[config.defaultMode] ?? "")}`,
+		`${themeLabel("mode")}     ${modeTone(mode)(mode)}  ${dim(MODE_HINTS[mode] ?? "")}`,
 		`${themeLabel("advisor")}  ${label}`,
 	];
 	if (config.council) {
@@ -406,17 +409,12 @@ export async function gatherAnswers(
 	};
 }
 
-/**
- * The real pickers — every one raw-mode (arrow-key selects, a filterable model
- * list, a text field, a y/n). All the same input paradigm, so there's no
- * raw↔readline handoff to drop keystrokes on, and the whole wizard is drivable
- * from a single keystroke stream.
- */
-const productionPickers: Pickers = {
+/** Cancellable settings pickers reuse the same raw-mode driver, without legacy default-on-Esc behavior. */
+const editorPickers: EditorPickers = {
 	select: (header, options, initial) => runSelect(header, options, initial, { rail: true }),
-	filterSelect: (header, items) => runFilterSelect(header, items, { allowCustom: true, rail: true }),
-	ask: (question, def) => runInput(question, def, { rail: true }),
-	confirm: (question, defaultYes) => runConfirm(question, defaultYes, { rail: true }),
+	filterSelect: (header, items, initial) => runFilterSelect(header, items, { initial, rail: true, cancelLabel: "cancel" }),
+	ask: (header, def) => runInput(header, def, { rail: true, cancel: true }),
+	status: (message) => railNote(message),
 	listModels,
 	listEfforts,
 };
@@ -476,21 +474,20 @@ async function finalize(
  */
 export async function runConfig(opts: ConfigOptions): Promise<number> {
 	const available = availableBackends();
-	if (available.length === 0) {
+	const isTty = process.stdin.isTTY === true;
+	const interactive = isTty && !opts.yes && !opts.backend && !opts.mode;
+	if (available.length === 0 && !interactive) {
 		console.error(red("No advisor backend found on this machine."));
 		console.error(dim("Install codex, claude or crush (the three verified working), or set ANTHROPIC_API_KEY, then re-run."));
 		return 1;
 	}
 
-	const isTty = process.stdin.isTTY === true;
 	if (!isTty && !opts.yes && !opts.dryRun) {
 		console.error("bpx-council config: not a terminal. Re-run with --yes (plus --backend/--mode/--scope) or --dry-run.");
 		return 1;
 	}
 
-	// Interactive only with a terminal and no pre-answering flags.
-	const interactive = isTty && !opts.yes && !opts.backend && !opts.mode;
-
+	// Interactive settings never change the file until Review → Save.
 	if (interactive) {
 		railIntro(bold(cyan("bpx-council")), "configure your advisor");
 
@@ -498,11 +495,9 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 		// when it's already pinned (--scope or an explicit --config).
 		let scope = opts.scope;
 		const asksScope = !scope && !opts.configPath;
-		// Four questions when we ask about scope, three when it's already pinned.
-		const total = asksScope ? 4 : 3;
-		const scopeChrome = makeRailChrome(total);
+		const scopeChrome = makeRailChrome(1);
 		if (asksScope) {
-			const picked = await productionPickers.select(
+			const picked = await editorPickers.select(
 				scopeChrome.ask(1, "Save where?"),
 				[
 					{ label: "This project", value: "project", hint: ".bpx-council.json in the repo — commit it for the team" },
@@ -517,33 +512,31 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 			scope = picked === "project" ? "project" : "global";
 		}
 		const path = targetPath({ ...opts, scope });
-		if (asksScope) scopeChrome.answered("Save where", scope === "project" ? "this project" : "global", prettyPath(path));
-
-		const read = readExisting(path, scope === "project" && !opts.configPath);
-		if (!read.ok) return refuseUnparseable(path);
-
-		// Re-running? Say what's already there, so it's clear this edits rather
-		// than starts from scratch.
-		if (read.config) {
-			const b = read.config.solo?.backend;
-			const current = b?.type === "http" ? b.provider : b?.command;
-			railNote(`editing existing config${current ? ` · currently ${current}` : ""}`);
-		}
-
-		// The scope question, when asked, shifts everything gatherAnswers numbers.
-		const chrome = makeRailChrome(total, asksScope ? 1 : 0);
-		const choices = scope === "project" && !opts.configPath ? available.filter((b) => b.name === "anthropic") : available;
-		if (choices.length === 0) {
-			console.error(red("Project config needs ANTHROPIC_API_KEY for tool-free Anthropic HTTP. Use global config or explicit --config for custom routes."));
+		const project = scope === "project" && !opts.configPath;
+		if (project && projectTargetIsGlobal(path)) {
+			console.error(red("Project config would overwrite global settings. Choose Global instead."));
 			return 1;
 		}
-		const answers = await gatherAnswers(productionPickers, choices, read.config, chrome);
-		const config = buildConfig(answers, read.config);
-		return await finalize(path, config, opts.dryRun ?? false, () => runConfirm(bold("Write this config?"), true, { rail: true }), true, scope === "project" && !opts.configPath);
+		if (asksScope) scopeChrome.answered("Save where", scope === "project" ? "this project" : "global", prettyPath(path));
+
+		const read = readExisting(path, project);
+		if (!read.ok) return refuseUnparseable(path);
+		const config = await editConfig(editorPickers, available, read.config, {
+			path, scope: opts.configPath ? "explicit" : scope ?? "global", project,
+		});
+		if (config === null) {
+			railOutro([dim("Discarded. Nothing written.")]);
+			return 0;
+		}
+		return finalize(path, config, opts.dryRun ?? false, undefined, true, project);
 	}
 
 	// Headless: flags + existing at the chosen scope, no confirm.
 	const path = targetPath(opts);
+	if (opts.scope === "project" && !opts.configPath && projectTargetIsGlobal(path)) {
+		console.error(red("Project config would overwrite global settings. Choose Global instead."));
+		return 1;
+	}
 	const read = readExisting(path, opts.scope === "project" && !opts.configPath);
 	if (!read.ok) return refuseUnparseable(path);
 	const existing = read.config;

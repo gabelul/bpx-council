@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { filterItems, renderFilter, renderSelect } from "../src/select.js";
+import { filterItems, renderFilter, renderInput, renderSelect } from "../src/select.js";
 import { dimProvider, highlightMatch, MODE_HINTS, modeTone } from "../src/theme.js";
 import { parseAnthropicModels, parseCodexModels, parseOpencodeModels, backendListsModels } from "../src/models-list.js";
 
@@ -40,6 +40,26 @@ describe("renderSelect", () => {
 		const long = "x".repeat(200);
 		const out = renderSelect([{ label: long, value: "v" }], 0, "h", 40);
 		for (const line of out.split("\n")) expect(line.length).toBeLessThanOrEqual(40);
+	});
+});
+
+describe("windowed settings renderers", () => {
+	it("windows long selects around current cursor, with count and no wrapped lines", () => {
+		const options = Array.from({ length: 40 }, (_, i) => ({ label: `persona-${i}`, value: String(i) }));
+		const out = renderSelect(options, 25, "Seats", 24, 5);
+		expect(out).toContain("❯ persona-25");
+		expect(out).not.toContain("persona-0");
+		expect(out).toContain("40 choices");
+		expect(out.split("\n")).toHaveLength(10);
+		for (const line of out.split("\n")) expect(line.length).toBeLessThanOrEqual(24);
+	});
+
+	it("clips text/default hint together on narrow terminals", () => {
+		for (const value of ["", "long-model-name".repeat(10)]) {
+			const out = renderInput("Model", value, "stored-model".repeat(20), 20, true);
+			for (const line of out.split("\n")) expect(line.length).toBeLessThanOrEqual(20);
+			expect(out).not.toContain("esc default");
+		}
 	});
 });
 

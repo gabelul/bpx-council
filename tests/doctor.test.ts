@@ -58,6 +58,16 @@ describe("doctor command", () => {
 		expect(existsSync(marker)).toBe(false);
 	});
 
+	it("loads home config only as global settings without calling an advisor", () => {
+		const marker = fakeCodex();
+		writeFileSync(join(root, ".bpx-council.json"), JSON.stringify({ solo: { backend: { type: "cli", command: "codex" } } }));
+		const result = cli(["doctor"], { HOME: root });
+		expect(result.status).toBe(0);
+		expect(result.stdout).toContain("Global config: loaded; project config: absent");
+		expect(result.stdout).not.toContain("Config error");
+		expect(existsSync(marker)).toBe(false);
+	});
+
 	it("rejects consult/setup/install flags without executing probe", () => {
 		const marker = fakeCodex();
 		for (const args of [["doctor", "--probe", "--mode", "council"], ["doctor", "--format", "json"], ["doctor", "--version"], ["doctor", "--probe", "--file", "x"]]) {

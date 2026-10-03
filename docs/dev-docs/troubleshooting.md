@@ -7,6 +7,47 @@ Not a changelog — see `CHANGELOG.md` for releases.
 
 ---
 
+## Running from home rejected the global config as project config
+
+**Symptom**
+
+Running `bpx-council "Is this auth flow sane?"` from `~` failed with:
+
+```text
+solo.backend.command cannot select a CLI in project config; use global config or explicit --config
+```
+
+**Root cause**
+
+`resolveConfig` loaded `~/.bpx-council.json` as trusted global settings, then
+`projectConfigPath` walked up from cwd and discovered the same file again.
+The second read applied project restrictions. Non-git directories beneath home
+hit the same bug; tests kept their project and HOME sandboxes separate.
+
+**Fix**
+
+Stop project discovery at home, before checking its config. Compare directory
+identities to handle symlinked home paths, not config-file targets: a distinct
+project config symlink remains untrusted. Both resolution and offline `doctor`
+use this discovery function.
+
+Until the installed package includes the fix, explicitly selecting the global
+file bypasses discovery without changing project restrictions:
+
+```bash
+bpx-council --config "$HOME/.bpx-council.json" "Is this auth flow sane?"
+```
+
+**Files:** `src/config.ts`, `tests/config.test.ts`, `tests/doctor.test.ts`
+
+**Lesson**
+
+Global and project config share a filename. Test where their discovery paths
+meet, not only separate temp directories. Source tests do not repair an already
+installed npm copy; verify the built package too.
+
+---
+
 ## `--model` silently replaced the question with its own argument
 
 **Date:** 2026-07-21 · **Severity:** high — produced confident answers to a

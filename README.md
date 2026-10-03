@@ -174,14 +174,14 @@ and at most 8,000 characters. Define up to 16 persona entries. Gut-check
 uses explicit `--backend` first, then `gutCheck.backend`, then Solo; `null`
 resets it to Solo. `maxOutputTokens` (1–4096) sets Anthropic HTTP `max_tokens`.
 For a CLI route, it's only a prompt request, not a hard limit or billing cap.
-Findings are never cut after generation. The wizard preserves these advanced
-fields but doesn't edit them; use the JSON file.
+Findings are never cut after generation. The settings hub edits gut-check routes
+and output tokens. Change persona prompts and the Council roster in the JSON file.
 
 Each seat uses its explicit flag, then its saved spec, then the shared Solo
 backend. `--backend` and `--model` change that fallback, not pinned seats.
 Omit a seat to inherit Solo; in a project config, use `null` to reset a seat
-assigned globally. The wizard accepts `keep` for no change and `inherit` to
-reset a seat to Solo. Without `--mode`, the saved `defaultMode` runs; an
+assigned globally. In settings, choose **Inherit Advisor** to write `null`;
+Escape leaves the current choice alone. Without `--mode`, the saved `defaultMode` runs; an
 explicit `--mode solo` still forces Solo. If synthesis fails after Council
 members answer, their verdicts still print, but the CLI exits nonzero; no
 verdict is claimed.
@@ -350,12 +350,22 @@ cases where you don't.
 
 ## Configuring
 
-You don't have to touch the JSON. `bpx-council config` walks you through it with
-arrow-key pickers, and where a backend can list its own models (codex, opencode,
-crush, cursor-agent, anthropic) a type-to-filter picker so you're choosing from
-the real list instead of typing a name from memory and hoping. Where it can
-report reasoning levels too, you get those, for the model you just picked. It
-finds your backends, then writes `~/.bpx-council.json`:
+`bpx-council config` opens a settings hub showing target path, scope, current
+choices and unsaved changes. Advisor, Gut-check, Council, Debate and default mode
+are separate sections; choosing Solo doesn't hide the other routes.
+
+Edits stay in a draft until **Review & save → Save**. Back from review keeps the
+draft. Escape from a picker leaves its current value alone; Escape from the hub
+exits, asking before discarding unsaved changes. Discard and Ctrl-C write nothing.
+Opening settings doesn't rewrite or normalize your file.
+
+Model catalogs load only when you ask for them, with search for long lists.
+Saved unavailable choices stay selectable, and manual model IDs are always an
+option. **Backend default** clears the pinned model and its effort; changing a
+model clears stale effort too. Explicit Advisor route/model/effort changes also
+clear the legacy `solo.thinkingLevel` fallback, so it can't silently restore the
+old effort. Untouched settings keep it. Same-backend edits keep custom arguments
+and timeouts. Detected binaries and catalog entries don't prove you're logged in.
 
 ```bash
 bpx-council config          # interactive
@@ -363,11 +373,11 @@ bpx-council config --dry-run
 bpx-council config --backend codex --model gpt-5.6-sol --mode solo --yes   # headless
 ```
 
-It merges into any existing config (your hand-set keys survive), and refuses
-rather than clobber a config it can't parse. Its Council setup includes the
-synthesizer; choosing Debate as default offers separate advocate, critic and
-synthesizer routes. Headless `config --yes` leaves saved seats, roster, persona
-prompts, gut-check settings, and backend-specific options alone. There's also a one-command
+The hub preserves untouched fields and refuses rather than clobber an invalid
+file. Council shows your configured roster, including custom names, plus its
+synthesizer; Debate exposes advocate, critic and synthesizer independently.
+Headless `config --yes` leaves saved seats, roster, persona prompts, gut-check
+settings, and backend-specific options alone. There's also a one-command
 onboarding that does both this and the agent wiring:
 
 ```bash

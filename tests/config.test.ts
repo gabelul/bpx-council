@@ -6,7 +6,7 @@
  * project override or franken-merges two backends into a broken one.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -94,6 +94,59 @@ describe("projectConfigPath / resolveConfig discovery", () => {
 	it("returns undefined when there's no project config in the repo", () => {
 		mkdirSync(join(dir, ".git"));
 		expect(projectConfigPath(dir)).toBeUndefined();
+	});
+
+	it.each([".", "notes/deep", "notes/../notes/deep"])("keeps global CLI settings trusted from home path %s", (relative) => {
+		writeFileSync(join(home, ".bpx-council.json"), JSON.stringify(BASE));
+		mkdirSync(join(home, "notes", "deep"), { recursive: true });
+		const cwd = `${home}/${relative}`;
+		expect(projectConfigPath(cwd)).toBeUndefined();
+		expect(resolveConfig(undefined, cwd).solo.backend).toEqual(BASE.solo.backend);
+	});
+
+	it("stops at home even when home is a git root", () => {
+		mkdirSync(join(home, ".git"));
+		writeFileSync(join(home, ".bpx-council.json"), JSON.stringify(BASE));
+		expect(projectConfigPath(home)).toBeUndefined();
+		expect(resolveConfig(undefined, home).solo.backend).toEqual(BASE.solo.backend);
+	});
+
+	it("stops at a directory alias to home", () => {
+		writeFileSync(join(home, ".bpx-council.json"), JSON.stringify(BASE));
+		mkdirSync(join(home, "notes"));
+		const alias = join(dir, "home-link");
+		symlinkSync(home, alias, "dir");
+		expect(projectConfigPath(join(alias, "notes"))).toBeUndefined();
+		expect(resolveConfig(undefined, join(alias, "notes")).solo.backend).toEqual(BASE.solo.backend);
+	});
+
+	it("trusts a global config symlink without rediscovering its target", () => {
+		const target = join(dir, "dotfiles.json");
+		writeFileSync(target, JSON.stringify(BASE));
+		symlinkSync(target, join(home, ".bpx-council.json"));
+		expect(projectConfigPath(home)).toBeUndefined();
+		expect(resolveConfig(undefined, home).solo.backend).toEqual(BASE.solo.backend);
+	});
+
+	it("still discovers and restricts distinct project configs beneath home", () => {
+		writeFileSync(join(home, ".bpx-council.json"), JSON.stringify(BASE));
+		const project = join(home, "project");
+		mkdirSync(project);
+		const path = join(project, ".bpx-council.json");
+		writeFileSync(path, JSON.stringify({ defaultMode: "debate" }));
+		expect(projectConfigPath(project)).toBe(path);
+		expect(resolveConfig(undefined, project)).toMatchObject({ defaultMode: "debate", solo: BASE.solo });
+		writeFileSync(path, JSON.stringify(BASE));
+		expect(() => resolveConfig(undefined, project)).toThrow(/solo\.backend\.command.*project config/);
+	});
+
+	it("does not trust a distinct project config symlink to the global file", () => {
+		const global = join(home, ".bpx-council.json");
+		writeFileSync(global, JSON.stringify(BASE));
+		const project = join(dir, ".bpx-council.json");
+		symlinkSync(global, project);
+		expect(projectConfigPath(dir)).toBe(project);
+		expect(() => resolveConfig(undefined, dir)).toThrow(/solo\.backend\.command.*project config/);
 	});
 
 	it("refuses configured image paths instead of silently sending unvalidated bytes", () => {

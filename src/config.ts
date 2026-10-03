@@ -7,8 +7,8 @@
  */
 
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { readFileSync, existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { validateConfig } from "./config-validation.js";
 import type { Stance } from "./personas.js";
 
@@ -116,15 +116,33 @@ export function configPath(): string {
 }
 
 /**
- * The nearest project config, walking up from `cwd` to the git root.
+ * Resolve directory identity for home-boundary checks, including symlink aliases.
+ * @param path Directory path to compare.
+ * @returns Canonical path, or absolute lexical path when inaccessible.
+ */
+function directoryIdentity(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return resolve(path);
+	}
+}
+
+/**
+ * Find the nearest project config from `cwd`, stopping at the git root or home.
  *
- * A `.bpx-council.json` committed at the repo root gives a whole team the same
- * council without anyone configuring it. Search stops at the git root — we
- * don't wander above the repo into unrelated parents.
+ * Home's config is already loaded as trusted global settings, never as a
+ * project layer. Compare directories, not config targets: a project's symlink
+ * to the global file must still receive project restrictions.
+ * @param cwd Directory to search from.
+ * @returns Discovered project config path, or undefined if none is found.
  */
 export function projectConfigPath(cwd: string): string | undefined {
-	let dir = cwd;
+	const home = resolve(homedir());
+	const homeIdentity = directoryIdentity(home);
+	let dir = resolve(cwd);
 	for (;;) {
+		if (dir === home || directoryIdentity(dir) === homeIdentity) return undefined;
 		const candidate = join(dir, ".bpx-council.json");
 		if (existsSync(candidate)) return candidate;
 		if (existsSync(join(dir, ".git"))) return undefined; // repo root, none found
