@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/gabelul/bpx-council/compare/v2.0.0...v2.1.0) (2026-10-03)
+
+
+### Features
+
+* add draft-based config settings hub ([84ccdfb](https://github.com/gabelul/bpx-council/commit/84ccdfb84860289c2b99e0ce842c727b2c905e6a))
+
 ## [2.0.0](https://github.com/gabelul/bpx-council/compare/v1.9.0...v2.0.0) (2026-09-24)
 
 
