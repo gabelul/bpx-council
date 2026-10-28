@@ -1,0 +1,73 @@
+{
+  "type": "Screenshot-based terminal UI visual prototype",
+  "intent": "Edit the supplied bpx-council screenshot into a better backend-check progress screen. Fix tiny upper-left log marooned in an enormous empty blue canvas. This is a visual reference for an Ink terminal implementation, not a web app.",
+  "reference_preservation": "Keep landscape terminal window, front-on screenshot framing, authentic DOS/Turbo Vision appearance and every existing backend/status fact. Remove the black CleanShot floating recorder/key overlay at bottom center. Change layout and background only; do not invent test outcomes.",
+  "scene": {
+    "surround": "Dark charcoal inactive terminal canvas #151820, thin rectangular outer terminal frame. No background applications or desktop scenery.",
+    "subject": "One compact rectangular DOS dialog centered horizontally and vertically, bounded width with comfortable but compact cell padding. Visually substantial and legible, neither tiny nor stretched across entire window. Blue dialog #000080 with crisp light-gray double-line box-drawing border, white monospace text; title interrupts top border."
+  },
+  "hierarchy": {
+    "title": "Local backend check",
+    "progress": "Checked 6/9 steps",
+    "bar": "Horizontal terminal block-character progress bar, six of nine segments filled amber; three unfilled. Never smooth graphical gradient.",
+    "current": "Current probe: qwen",
+    "table": "Aligned two-column Backend / Status table with consistent terminal-cell spacing and nine rows. Place directly under progress. Highlight qwen row using a solid darker/lighter ANSI background and amber spinner character. Table fills dialog width, not entire window.",
+    "footer": "Short safety note inside dialog, separated by thin box-drawing line. Bottom keyboard strip inside same dialog; Esc and Ctrl-C visually accented, all other controls absent."
+  },
+  "table_rows": [
+    [
+      "codex",
+      "Version found"
+    ],
+    [
+      "claude",
+      "Version found"
+    ],
+    [
+      "pi",
+      "Version found"
+    ],
+    [
+      "opencode",
+      "Version found"
+    ],
+    [
+      "cursor-agent",
+      "Version unavailable (warning)"
+    ],
+    [
+      "gemini",
+      "Check failed"
+    ],
+    [
+      "qwen",
+      "Checking"
+    ],
+    [
+      "crush",
+      "Waiting"
+    ],
+    [
+      "amp",
+      "Waiting"
+    ]
+  ],
+  "exact_footer": [
+    "Local version checks only. No model calls.",
+    "Esc  Cancel",
+    "Ctrl-C  Cancel + exit"
+  ],
+  "colors": {
+    "backend_identity": "Codex mint #a8e6cf; Claude peach #ffccaa; Pi lavender #c4b5fd; OpenCode cyan #87d7e8; other names light gray. Color backend names only, not whole table rows.",
+    "status": "Version found muted mint; warning amber #ffd166; Check failed salmon #ff9580; Checking amber; Waiting muted gray. Always retain literal status words; no color-only communication."
+  },
+  "typography": "Legible fixed-width terminal font on a strict character grid, same consistent font scale throughout. Hierarchy from spacing, borders and color rather than large proportional headline fonts. Crisp rectangular geometry, no decorative graphics.",
+  "constraints": [
+    "One screen, one centered dialog; no side-by-side variants or captions outside terminal.",
+    "No rounded SaaS cards, gradients, glass blur, neon bloom, graphic logo badges, emoji, illustrations, photographic desk or CRT distortion.",
+    "No fake authentication success, model connection receipts, invented versions, percentage labels or extra actions.",
+    "No huge left-aligned blue sheet with most of screen unused.",
+    "No mouse-only controls. Terminal-feasible Unicode borders, ANSI colors and text/block progress only.",
+    "All quoted copy readable and correctly spelled; no lorem ipsum, no placeholder text."
+  ]
+}

@@ -18,7 +18,10 @@ import type { PreparedImage } from "./attachments.js";
 import type { PtyBackendConfig } from "./pty-backend.js";
 import { isTmuxAvailable } from "./pty-backend.js";
 
-export type DetectedBackend = CliBackendConfig | HttpBackendConfig | PtyBackendConfig;
+import type { SdkBackendConfig } from "./sdk-backend.js";
+import { parseSdkRoute, serializeSdkRoute } from "./sdk-route.js";
+
+export type DetectedBackend = CliBackendConfig | HttpBackendConfig | PtyBackendConfig | SdkBackendConfig;
 
 /** Run-wide controls applied to explicitly selected seat routes. */
 export interface SeatOptions {
@@ -28,7 +31,7 @@ export interface SeatOptions {
 	imageData?: PreparedImage[];
 }
 
-export type BackendType = "cli" | "http" | "tmux";
+export type BackendType = "cli" | "http" | "tmux" | "sdk";
 
 /** What the user explicitly asked for (--backend or config). */
 export interface ExplicitBackend {
@@ -72,6 +75,7 @@ export function detectBackend(explicit?: ExplicitBackend): DetectedBackend {
  * these per persona, and index.ts runs main() on import.
  */
 export function parseBackendArg(arg: string): ExplicitBackend {
+	if (arg.startsWith("sdk:")) return { type: "sdk", ...parseSdkRoute(arg) };
 	// A `name:model` spec pins a model to this backend, e.g. `codex:gpt-5-codex`
 	// or `anthropic:claude-opus-4-8`. Split on the FIRST colon only — model IDs
 	// don't contain one, but this stays safe if a future one does.
@@ -114,7 +118,8 @@ export function resolveSeatBackend(
 		if (options.timeoutMs) backend.timeoutMs = options.timeoutMs;
 		if (options.isolate && backend.type === "cli") backend.isolate = true;
 	}
-	if (options.images?.length) {
+	if (options.images?.length || options.imageData?.length) {
+		if (backend.type === "sdk") throw new Error("SDK advisor image transport is not supported; use codex or anthropic HTTP");
 		const name = backend.type === "http" ? backend.provider : backend.command;
 		const support = backend.type === "tmux" ? undefined : imageSupport(name);
 		if (!support) throw new Error(`${name} can't take images in this seat. Use codex or anthropic.`);
@@ -143,6 +148,7 @@ export function textOnlyImageWarning(backend: DetectedBackend): string | undefin
  * @returns Human-readable backend:model@effort label.
  */
 export function backendLabel(backend: DetectedBackend): string {
+	if (backend.type === "sdk") return serializeSdkRoute(backend);
 	if (backend.type === "http") return backend.model ?? backend.provider ?? "http";
 	// CLI/tmux: show the pinned model too when there is one, so a council header
 	// reads "codex:gpt-5-codex" rather than a bare "codex".
@@ -155,7 +161,12 @@ export function backendLabel(backend: DetectedBackend): string {
 	return effort ? `${base}@${effort}` : base;
 }
 
+/** Resolve explicit transport without converting SDK routes to HTTP. @param explicit Selected route. @returns Concrete backend. */
 function resolveExplicit(explicit: ExplicitBackend): DetectedBackend {
+	if (explicit.type === "sdk") {
+		if (!explicit.provider) throw new Error("SDK provider is required");
+		return { type: "sdk", provider: explicit.provider, model: explicit.model, effort: explicit.effort, timeoutMs: 120_000 };
+	}
 	if (explicit.type === "cli") {
 		// Carry the pinned model through — callCliAdvisor injects it as the CLI's
 		// own --model flag. Without a model the CLI uses whatever it's configured
@@ -200,7 +211,7 @@ export function availableBackends(): AvailableBackend[] {
 		// Installed but unusable (amp) is worse than absent: picking it would save a
 		// config that fails every consult. Leave it out of the offer entirely.
 		if (isOnPath(cmd) && !unusableReason(cmd)) {
-			out.push({ name: cmd, kind: "cli", detail: `${CLI_BACKENDS[cmd].label} · on PATH${cmd === "claude" || cmd === "opencode" ? " · tools disabled by preset" : cmd === "codex" ? " · read-only sandbox; can read project files" : " · may run tools (trusted choice)"}` });
+			out.push({ name: cmd, kind: "cli", detail: `${CLI_BACKENDS[cmd].label} · on PATH${cmd === "pi" ? " · tools/extensions disabled by preset" : cmd === "claude" || cmd === "opencode" ? " · tools disabled by preset" : cmd === "codex" ? " · read-only sandbox; can read project files" : " · may run tools (trusted choice)"}` });
 		}
 	}
 	if (process.env.ANTHROPIC_API_KEY) {

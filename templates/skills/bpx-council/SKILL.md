@@ -33,8 +33,17 @@ explicitly selected stdin context exists, avoiding inherited open pipes.
 For a machine-readable result, run:
 
 ```text
-bpx-council --format json --no-stdin --question <one safely quoted question argument>
+bpx-council --mode solo --format json --no-stdin --question <one safely quoted question argument>
 ```
+
+Set mode explicitly: saved configuration can change the default. For other
+modes, replace `--mode solo` with the chosen mode rather than launching another
+call afterward.
+
+Allow the host shell more time than the CLI's per-advisor timeout (120 seconds
+by default). Council also has synthesis; Debate has sequential rounds. If the
+host returns a background task ID, wait for that task's output and exit status.
+An unfinished task isn't a failed consult. Don't start a duplicate paid call.
 
 Read JSON receipt (`schemaVersion: 1`). Check `status` (`complete`,
 `partial`, `failed`), `advice`, `error`, `attempts`, `notRun`, and `usage`.

@@ -25,6 +25,8 @@ export interface HttpBackendConfig {
 	maxOutputTokens?: number;
 	/** Per-call deadline in milliseconds. */
 	timeoutMs?: number;
+	/** Transient response-body byte ceiling; never reads this from config files. */
+	maxResponseBytes?: number;
 	apiKeyEnv?: string;
 	baseUrl?: string;
 }
@@ -82,14 +84,17 @@ function anthropicContent(userMessage: string, images?: PreparedImage[]): unknow
  * @param userMessage - User question and context.
  * @param backend - Provider route and optional frozen images.
  * @param timeoutMs - Abort deadline in milliseconds.
- * @returns Advisor text or a failure result.
+ * @param abortSignal - Optional caller cancellation, forwarded to fetch and body reading.
+ * @returns Advisor text or a failure result after cleanup.
  */
 export async function callHttpAdvisor(
 	systemPrompt: string,
 	userMessage: string,
 	backend: HttpBackendConfig,
 	timeoutMs = 120_000,
+	abortSignal?: AbortSignal,
 ): Promise<HttpResult> {
+	if (abortSignal?.aborted) return { ok: false, text: "", error: "Advisor call cancelled" };
 	const defaults = PROVIDER_DEFAULTS[backend.provider];
 	if (backend.provider === "openai" || backend.provider === "google") {
 		return { ok: false, text: "", error: `HTTP backend for ${backend.provider} not yet implemented. Use a CLI backend.` };
@@ -106,9 +111,12 @@ export async function callHttpAdvisor(
 	const model = httpModel(backend) ?? defaults.model;
 	const baseUrl = backend.baseUrl || defaults.baseUrl;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	const controller = new AbortController();
+	const onAbort = () => controller.abort();
+	abortSignal?.addEventListener("abort", onAbort, { once: true });
+	if (abortSignal?.aborted) controller.abort();
 
 	try {
-		const controller = new AbortController();
 		timer = setTimeout(() => controller.abort(), timeoutMs);
 
 		if (backend.provider === "anthropic") {
@@ -128,15 +136,47 @@ export async function callHttpAdvisor(
 				signal: controller.signal,
 			});
 
+			const bodyLimit = backend.maxResponseBytes ?? 4 * 1024 * 1024;
+			let body: string | undefined;
+			if (response.body) {
+				const reader = response.body.getReader();
+				let bodyCancellation: Promise<void> | undefined;
+				const cancelBody = () => { bodyCancellation ??= reader.cancel().catch(() => {}); };
+				controller.signal.addEventListener("abort", cancelBody, { once: true });
+				if (controller.signal.aborted) cancelBody();
+				const chunks: Uint8Array[] = [];
+				let bytes = 0;
+				try {
+					for (;;) {
+						const chunk = await reader.read();
+						if (chunk.done) break;
+						bytes += chunk.value.byteLength;
+						if (bytes > bodyLimit) {
+							controller.abort();
+							await bodyCancellation;
+							return { ok: false, text: "", error: `${backend.provider} HTTP response exceeded ${bodyLimit} bytes` };
+						}
+						chunks.push(chunk.value);
+					}
+					body = Buffer.concat(chunks).toString("utf8");
+				} finally {
+					controller.signal.removeEventListener("abort", cancelBody);
+					await bodyCancellation;
+					reader.releaseLock();
+				}
+			}
+			if (controller.signal.aborted) throw new Error("HTTP response aborted");
+
 			if (!response.ok) {
-				const body = await response.text();
+				body ??= await response.text();
 				let usage: ProviderUsage | undefined;
 				try { usage = anthropicUsage((JSON.parse(body) as { usage?: unknown }).usage); }
 				catch { /* Error bodies aren't guaranteed to be JSON. */ }
 				return { ok: false, text: "", error: `${backend.provider} API HTTP ${response.status}`, usage };
 			}
 
-			const data = await response.json() as { content?: Array<{ type: string; text?: string }>; usage?: unknown };
+			const data = (body === undefined ? await response.json() : JSON.parse(body)) as { content?: Array<{ type: string; text?: string }>; usage?: unknown };
+			if (Buffer.byteLength(JSON.stringify(data)) > bodyLimit) return { ok: false, text: "", error: `${backend.provider} HTTP response exceeded ${bodyLimit} bytes` };
 			const usage = anthropicUsage(data.usage);
 			const text = (data.content ?? [])
 				.filter((b): b is { type: "text"; text: string } => b.type === "text" && typeof b.text === "string")
@@ -150,11 +190,13 @@ export async function callHttpAdvisor(
 		// OpenAI (and OpenAI-compatible) — add more providers here.
 		return { ok: false, text: "", error: `HTTP backend for ${backend.provider} not yet implemented` };
 	} catch (e) {
-		if (e instanceof Error && e.name === "AbortError") {
+		if (abortSignal?.aborted) return { ok: false, text: "", error: "Advisor call cancelled" };
+		if (controller.signal.aborted || (e instanceof Error && e.name === "AbortError")) {
 			return { ok: false, text: "", error: `${backend.provider} HTTP timed out after ${timeoutMs}ms` };
 		}
 		return { ok: false, text: "", error: `${backend.provider} HTTP request failed` };
 	} finally {
 		if (timer) clearTimeout(timer);
+		abortSignal?.removeEventListener("abort", onAbort);
 	}
 }

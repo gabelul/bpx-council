@@ -5,6 +5,8 @@ import { callAdvisor, type BackendConfig } from "./backend.js";
 import { backendLabel, detectBackend, isOnPath, parseBackendArg, resolveSeatBackend } from "./detect.js";
 import { unusableReason } from "./cli-registry.js";
 import { DEFAULT_PERSONAS } from "./personas.js";
+import { preflightSdkBackend } from "./sdk-backend.js";
+import { flushInvocationOutput, runInvocation } from "./invocation-lifecycle.js";
 
 /** Limit untrusted path/model text to one printable line. Never show argv, keys or responses. */
 function display(value: string): string {
@@ -13,6 +15,10 @@ function display(value: string): string {
 
 /** Classify local evidence only; installed binaries and present keys are not proof of authentication. */
 export function routeStatus(backend: BackendConfig): string {
+	if (backend.type === "sdk") {
+		const checked = preflightSdkBackend(backend);
+		return checked.ok ? "Council credential stored; connection untested" : `unavailable (${display(checked.error ?? "direct provider not configured")})`;
+	}
 	if (backend.type === "http") {
 		if (backend.provider !== "anthropic") return "unavailable (HTTP provider not implemented)";
 		const keyPresent = Boolean(process.env[backend.apiKeyEnv ?? "ANTHROPIC_API_KEY"]);
@@ -38,11 +44,11 @@ export function doctorRoutes(config: BpxCouncilConfig): Array<{ seat: string; ba
 	}
 	if (shared) {
 		shared = { ...shared };
-		shared.model = process.env.BPX_COUNCIL_MODEL ?? process.env.ANTHROPIC_MODEL ?? shared.model;
+		if (shared.type !== "sdk") shared.model = process.env.BPX_COUNCIL_MODEL ?? process.env.ANTHROPIC_MODEL ?? shared.model;
 		if (shared.type === "http" && !shared.model && shared.provider === "anthropic") {
 			shared.model = (detectBackend(parseBackendArg("anthropic")) as typeof shared).model;
 		}
-		if (shared.type === "cli" && !shared.effort && config.solo.thinkingLevel) shared.effort = config.solo.thinkingLevel;
+		if ((shared.type === "cli" || shared.type === "sdk") && !shared.effort && config.solo.thinkingLevel) shared.effort = config.solo.thinkingLevel;
 	}
 	const rows: Array<{ seat: string; backend?: BackendConfig; error?: string; source: string }> = [];
 	const add = (seat: string, spec?: string | null) => {
@@ -99,8 +105,8 @@ export async function runDoctor(configFile: string | undefined, cwd: string, pro
 		console.error("Probe skipped: Solo route unavailable.");
 		return 1;
 	}
-	// Only Codex's read-only preset, Claude's tool-disabled preset, and the
-	// built-in Anthropic endpoint. Custom args/endpoints may execute more.
+	// Known CLI smoke presets, built-in Anthropic HTTP and guarded direct SDK.
+	// Custom CLI arguments/endpoints may execute more.
 	if ((solo.type === "cli" && (!["codex", "claude"].includes(solo.command) || solo.args?.length)) ||
 		(solo.type === "http" && (solo.provider !== "anthropic" || solo.baseUrl || solo.apiKeyEnv)) || solo.type === "tmux") {
 		console.error("Probe skipped: route has no bounded, tool-disabled smoke preset. Use a supported Solo route.");
@@ -108,9 +114,24 @@ export async function runDoctor(configFile: string | undefined, cwd: string, pro
 	}
 	const probeLabel = solo.type === "http" ? `${solo.provider}:${backendLabel(solo)}` : backendLabel(solo);
 	console.log(`Probe route: ${display(probeLabel)}. One advisor call; may charge API credits or subscription quota.`);
+	if (solo.type === "sdk") console.log(`SDK probe retains selected thinking and output ceiling (${solo.maxOutputTokens ?? "default, up to 8192"} tokens).`);
 	const bounded: BackendConfig = solo.type === "http"
 		? { ...solo, images: undefined, imageData: undefined, timeoutMs: 10_000, maxOutputTokens: 32 }
-		: { ...solo, images: undefined, timeoutMs: 10_000, maxStdoutBytes: 8 * 1024, isolate: true };
+		: solo.type === "sdk"
+			? { ...solo, images: undefined, timeoutMs: Math.min(solo.timeoutMs ?? 120_000, 10_000), maxOutputBytes: 8 * 1024 }
+			: { ...solo, images: undefined, timeoutMs: 10_000, maxStdoutBytes: 8 * 1024, isolate: true };
+	if (bounded.type === "sdk") {
+		try {
+			const run = await runInvocation(signal => callAdvisor("Reply with OK only. Do not use tools.", "Reply OK.", bounded, signal), undefined,
+				async (result, cancelled) => {
+					if (cancelled) console.error("Probe cancelled; SDK cleanup completed.");
+					else if (!result.ok) console.error("Probe failed (no response details shown). Check route, login and model settings.");
+					else console.log("Probe response received from selected SDK route.");
+					await flushInvocationOutput();
+				});
+			return run.cancelled ? 130 : run.value.ok ? 0 : 1;
+		} catch { console.error("Probe failed (no response details shown)."); return process.exitCode === 130 ? 130 : 1; }
+	}
 	let result;
 	try { result = await callAdvisor("Reply with OK only. Do not use tools.", "Reply OK.", bounded); }
 	catch { console.error("Probe failed (no response details shown)."); return 1; }

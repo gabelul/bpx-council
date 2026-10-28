@@ -2,6 +2,7 @@ import { MODES } from "./args.js";
 import type { BackendConfig, BpxCouncilConfig } from "./config.js";
 import { validateConfig } from "./config-validation.js";
 import { parseBackendArg, type AvailableBackend } from "./detect.js";
+import { serializeSdkRoute } from "./sdk-route.js";
 import { DEFAULT_PERSONAS } from "./personas.js";
 import type { SelectOption } from "./select.js";
 
@@ -24,14 +25,15 @@ export interface EditorOptions {
 }
 
 /** Describe backend without exposing custom args, endpoints or credentials. @param backend Stored backend. @returns Route label. */
-function backendLabel(backend?: BackendConfig): string {
+export function backendLabel(backend?: BackendConfig): string {
 	if (!backend) return "Auto-detect";
+	if (backend.type === "sdk") return serializeSdkRoute({ ...backend, provider: backend.provider! });
 	return `${backend.type === "http" ? backend.provider : backend.command}${backend.type === "tmux" ? " (tmux)" : ""}${backend.model ? `:${backend.model}` : ""}${backend.effort ? `@${backend.effort}` : ""}`;
 }
 
 /** Read discovery name without converting stored backend to a spec. @param backend Stored backend. @returns Catalog name. */
-function backendName(backend: BackendConfig): string {
-	return backend.type === "http" ? backend.provider! : backend.command!;
+export function backendName(backend: BackendConfig): string {
+	return backend.type === "sdk" ? `sdk:${backend.provider}` : backend.type === "http" ? backend.provider! : backend.command!;
 }
 
 /** Describe inherited routes explicitly. @param spec Stored seat spec. @returns Display label. */
@@ -53,9 +55,99 @@ function summary(draft: BpxCouncilConfig, opts: EditorOptions, dirty: boolean): 
 }
 
 /** A route draft plus explicit intent to remove its legacy Advisor effort fallback. */
-interface EditedRoute {
+export interface EditedRoute {
 	route: BackendConfig | undefined;
 	clearLegacyEffort: boolean;
+}
+
+/** Explicit field intent; null means backend default or seat inheritance. */
+export type RouteChange = { field: "backend" | "model" | "effort"; value: string | null };
+/** Config route identity; Council members never share an action namespace. */
+export type RouteTarget = { section: "advisor" | "gut-check" | "council" | "debate"; role: string; member?: boolean };
+
+/** Change one field without normalizing untouched settings.
+ * @param current Exact stored backend. @param change Explicit edit. @returns Route plus legacy-reset intent, or null for no change.
+ */
+export function changeRoute(current: BackendConfig | undefined, change: RouteChange): EditedRoute | null {
+	if (change.field === "backend") {
+		if (change.value === null) return { route: undefined, clearLegacyEffort: true };
+		const parsed = parseBackendArg(change.value);
+		const selected: BackendConfig = parsed.type === "sdk"
+			? { type: "sdk", provider: parsed.provider! }
+			: parsed.type === "http"
+				? { type: "http", provider: parsed.provider as "anthropic" | "openai" | "google" }
+				: { type: parsed.type, command: parsed.command };
+		if (parsed.model) selected.model = parsed.model;
+		if (parsed.effort) selected.effort = parsed.effort;
+		if (current?.type === selected.type && backendName(current) === backendName(selected)) {
+			if (!parsed.model && !parsed.effort) return null;
+			const route = structuredClone(current);
+			if (parsed.model && parsed.model !== route.model) { route.model = parsed.model; delete route.effort; }
+			if (parsed.effort) route.effort = parsed.effort;
+			if (!parsed.effort && JSON.stringify(route) === JSON.stringify(current)) return null;
+			return { route, clearLegacyEffort: true };
+		}
+		return { route: selected, clearLegacyEffort: true };
+	}
+	if (!current) return null;
+	const route = structuredClone(current);
+	if (change.field === "model") {
+		if (change.value === route.model) return null;
+		if (change.value === null) delete route.model;
+		else route.model = change.value;
+		delete route.effort;
+	} else {
+		if (change.value === null) delete route.effort;
+		else route.effort = change.value;
+	}
+	return { route, clearLegacyEffort: true };
+}
+
+/** Read a seat without creating missing sections. @param draft Exact draft. @param target Route identity. @returns Stored spec. */
+export function routeSpec(draft: BpxCouncilConfig, target: RouteTarget): string | null | undefined {
+	if (target.section === "gut-check") return draft.gutCheck?.backend;
+	if (target.section === "debate") return draft.debate?.[target.role as keyof NonNullable<BpxCouncilConfig["debate"]>];
+	return target.member ? draft.council?.backends?.[target.role] : draft.council?.synthesizer;
+}
+
+/** Read exact Advisor object or parse a seat. @param draft Draft. @param target Route identity. @returns Pinned route, not fallback. */
+export function configRoute(draft: BpxCouncilConfig, target: RouteTarget): BackendConfig | undefined {
+	if (target.section === "advisor") return draft.solo?.backend;
+	const spec = routeSpec(draft, target);
+	return spec ? parseBackendArg(spec) as BackendConfig : undefined;
+}
+
+/** Store explicit route intent on a clone; only Advisor edits can clear its legacy effort.
+ * @param draft Exact draft. @param target Route identity. @param edited Route and intent. @returns Updated clone.
+ */
+export function storeRoute(draft: BpxCouncilConfig, target: RouteTarget, edited: EditedRoute): BpxCouncilConfig {
+	const next = structuredClone(draft);
+	if (target.section === "advisor") {
+		next.solo ??= {};
+		if (edited.route) next.solo.backend = edited.route;
+		else delete next.solo.backend;
+		if (edited.clearLegacyEffort) delete next.solo.thinkingLevel;
+		return next;
+	}
+	const route = edited.route;
+	// Empty effort suffix protects a literal @ inside model ID from the spec parser.
+	const spec = route ? `${route.type === "tmux" ? "tmux" : backendName(route)}${route.model ? `:${route.model}` : ""}${route.effort ? `@${route.effort}` : route.model?.includes("@") ? "@" : ""}` : null;
+	if (target.section === "gut-check") { next.gutCheck ??= {}; next.gutCheck.backend = spec; }
+	else if (target.section === "debate") { next.debate ??= {}; next.debate[target.role as keyof NonNullable<BpxCouncilConfig["debate"]>] = spec; }
+	else {
+		next.council ??= {};
+		if (target.member) { next.council.backends ??= {}; next.council.backends[target.role] = spec; }
+		else next.council.synthesizer = spec;
+	}
+	return next;
+}
+
+/** Apply a field edit without touching unrelated config. @param draft Draft. @param target Route identity. @param change Explicit field edit. @returns Draft clone, or original for no-op. */
+export function changeConfigRoute(draft: BpxCouncilConfig, target: RouteTarget, change: RouteChange): BpxCouncilConfig {
+	const current = configRoute(draft, target);
+	const legacyReset = target.section === "advisor" && !current && draft.solo?.thinkingLevel !== undefined && change.field === "effort" && change.value === null;
+	const edited = legacyReset ? { route: undefined, clearLegacyEffort: true } : changeRoute(current, change);
+	return edited ? storeRoute(draft, target, edited) : draft;
 }
 
 /** Edit one route in memory. Null leaves settings unchanged; inherited seats serialize separately.
@@ -89,24 +181,18 @@ async function editRoute(pickers: EditorPickers, available: AvailableBackend[], 
 				{ label: seat ? "Inherit Advisor" : "Auto-detect", value: "default" },
 				...(route ? [{ label: backendLabel(route), value: "current", hint: "current; keep exact settings" }] : []),
 				...choices.map((b, i) => ({ label: b.name, value: `choice:${i}`, kind: b.kind, hint: b.detail })),
-				...(!project ? [{ label: "Enter backend ID", value: "manual" }] : []),
+				...(!project ? [{ label: "Enter backend manually…", value: "manual", hint: "CLI name or route; not an API key; does not install software" }] : []),
 			];
 			const picked = await pickers.select("Backend · esc keeps current", options, route ? 1 : 0);
 			if (picked === null || picked === "current") continue;
-			if (picked === "default") { route = undefined; explicitDefault = true; clearLegacyEffort = true; continue; }
-			const name = picked === "manual" ? await pickers.ask("Backend ID (CLI command or HTTP provider)", "") : choices[Number(picked.slice(7))]?.name;
+			if (picked === "default") { const edited = changeRoute(route, { field: "backend", value: null })!; route = edited.route; explicitDefault = true; clearLegacyEffort = edited.clearLegacyEffort; continue; }
+			const name = picked === "manual" ? await pickers.ask("Backend command or route (e.g. pi; not an API key)", "") : choices[Number(picked.slice(7))]?.name;
 			if (!name?.trim()) continue;
-			const parsed = parseBackendArg(name.trim());
-			const selected: BackendConfig = parsed.type === "http"
-				? { type: "http", provider: parsed.provider as BackendConfig["provider"] }
-				: { type: parsed.type, command: parsed.command };
-			if (parsed.model) selected.model = parsed.model;
-			if (parsed.effort) selected.effort = parsed.effort;
-			// Selecting the same backend must not throw away custom flags/timeouts.
-			if (route?.type === selected.type && backendName(route) === backendName(selected)) continue;
-			route = selected;
+			const edited = changeRoute(route, { field: "backend", value: name.trim() });
+			if (!edited) continue;
+			route = edited.route;
 			explicitDefault = false;
-			clearLegacyEffort = true;
+			clearLegacyEffort = edited.clearLegacyEffort;
 		} else if (!route) {
 			await pickers.select("Choose a backend before pinning model or effort.", [{ label: "Back", value: "back" }], 0);
 		} else if (action === "model") {
@@ -118,7 +204,7 @@ async function editRoute(pickers: EditorPickers, available: AvailableBackend[], 
 			];
 			const picked = await pickers.select("Model · esc keeps current", options, route.model ? 1 : 0);
 			if (picked === null || picked === "current") continue;
-			if (picked === "default") { delete route.model; delete route.effort; clearLegacyEffort = true; continue; }
+			if (picked === "default") { const edited = changeRoute(route, { field: "model", value: null })!; route = edited.route; clearLegacyEffort = edited.clearLegacyEffort; continue; }
 			let model: string | null = null;
 			if (picked === "catalog") {
 				let models: string[] = [];
@@ -128,7 +214,7 @@ async function editRoute(pickers: EditorPickers, available: AvailableBackend[], 
 				if (items.length) model = await pickers.filterSelect("Model catalog · esc keeps current", items, Math.max(0, items.indexOf(route.model ?? "")));
 				else model = await pickers.ask("Catalog unavailable · enter model ID (esc keeps current)", route.model ?? "");
 			} else model = await pickers.ask("Model ID · esc keeps current", route.model ?? "");
-			if (model?.trim() && model.trim() !== route.model) { route.model = model.trim(); delete route.effort; clearLegacyEffort = true; }
+			if (model?.trim()) { const edited = changeRoute(route, { field: "model", value: model.trim() }); if (edited) { route = edited.route; clearLegacyEffort = edited.clearLegacyEffort; } }
 		} else if (action === "effort") {
 			let efforts: { levels: string[]; def?: string } | null = null;
 			pickers.status?.("Loading reasoning levels…");
@@ -141,8 +227,8 @@ async function editRoute(pickers: EditorPickers, available: AvailableBackend[], 
 			];
 			const fallback = legacyEffort && !clearLegacyEffort ? `\nLegacy fallback: ${legacyEffort}; Backend default clears it.` : "";
 			const picked = await pickers.select(`Reasoning effort · discovered levels only; esc keeps current${fallback}`, options, effectiveEffort ? 1 : 0);
-			if (picked === "default") { delete route.effort; clearLegacyEffort = true; }
-			else if (picked?.startsWith("level:")) { route.effort = picked.slice(6); clearLegacyEffort = true; }
+			const value = picked === "default" ? null : picked?.startsWith("level:") ? picked.slice(6) : undefined;
+			if (value !== undefined) { const edited = changeRoute(route, { field: "effort", value })!; route = edited.route; clearLegacyEffort = edited.clearLegacyEffort; }
 		}
 	}
 }
@@ -154,7 +240,7 @@ async function editSeat(pickers: EditorPickers, available: AvailableBackend[], s
 	if (edited === null) return undefined;
 	if (!edited.route) return null;
 	const route = edited.route;
-	return `${route.type === "tmux" ? "tmux" : backendName(route)}${route.model ? `:${route.model}` : ""}${route.effort ? `@${route.effort}` : ""}`;
+	return `${route.type === "tmux" ? "tmux" : backendName(route)}${route.model ? `:${route.model}` : ""}${route.effort ? `@${route.effort}` : route.model?.includes("@") ? "@" : ""}`;
 }
 
 /** Run summary-first settings hub over an isolated draft; never writes disk.
@@ -165,10 +251,10 @@ async function editSeat(pickers: EditorPickers, available: AvailableBackend[], s
  * @returns Validated draft only after explicit Review → Save; null on discard.
  */
 export async function editConfig(pickers: EditorPickers, available: AvailableBackend[], existing: BpxCouncilConfig | undefined, opts: EditorOptions): Promise<BpxCouncilConfig | null> {
-	const draft = structuredClone(existing ?? {}) as BpxCouncilConfig;
+	let draft = structuredClone(existing ?? {}) as BpxCouncilConfig;
 	const original = JSON.stringify(draft);
 	// A missing key does not prevent saving a provider choice for later use.
-	available = available.some((b) => b.name === "anthropic") ? available : [...available, { name: "anthropic", kind: "http", detail: "API key/login not verified" }];
+	available = available.some((b) => b.name === "anthropic") ? available : [...available, { name: "anthropic", kind: "http", detail: process.env.ANTHROPIC_API_KEY ? "API key present; connection not tested" : "API key missing; configure for later" }];
 	for (;;) {
 		const dirty = JSON.stringify(draft) !== original;
 		const members = draft.council?.members ?? DEFAULT_PERSONAS.map((p) => p.name);
@@ -189,12 +275,7 @@ export async function editConfig(pickers: EditorPickers, available: AvailableBac
 			if (mode !== null) draft.defaultMode = mode as BpxCouncilConfig["defaultMode"];
 		} else if (action === "advisor") {
 			const edited = await editRoute(pickers, available, draft.solo?.backend, false, opts.project ?? false, draft.solo?.thinkingLevel);
-			if (edited !== null) {
-				draft.solo ??= {};
-				if (edited.route) draft.solo.backend = edited.route;
-				else delete draft.solo.backend;
-				if (edited.clearLegacyEffort) delete draft.solo.thinkingLevel;
-			}
+			if (edited !== null) draft = storeRoute(draft, { section: "advisor", role: "advisor" }, edited);
 		} else if (action === "gut-check" || action === "council" || action === "debate") {
 			for (;;) {
 				const seats = action === "gut-check" ? ["backend"] : action === "debate" ? ["advocate", "critic", "synthesizer"] : [...(draft.council?.members ?? DEFAULT_PERSONAS.map((p) => p.name)), "synthesizer"];
@@ -221,9 +302,7 @@ export async function editConfig(pickers: EditorPickers, available: AvailableBac
 				const seat = selected.slice(5);
 				const spec = await editSeat(pickers, available, specFor(seat), opts.project ?? false);
 				if (spec === undefined) continue;
-				if (action === "gut-check") { draft.gutCheck ??= {}; draft.gutCheck.backend = spec; }
-				else if (action === "debate") { draft.debate ??= {}; draft.debate[seat as keyof NonNullable<BpxCouncilConfig["debate"]>] = spec; }
-				else { draft.council ??= {}; if (seat === "synthesizer") draft.council.synthesizer = spec; else { draft.council.backends ??= {}; draft.council.backends[seat] = spec; } }
+				draft = storeRoute(draft, { section: action, role: seat, member: action === "council" && seat !== "synthesizer" }, { route: spec ? parseBackendArg(spec) as BackendConfig : undefined, clearLegacyEffort: false });
 			}
 		} else if (action === "review") {
 			let error: string | undefined;

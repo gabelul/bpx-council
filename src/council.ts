@@ -7,7 +7,7 @@
  * whoever replied.
  */
 
-import { advisorTransportError, callAdvisor, type BackendConfig, type BackendResult } from "./backend.js";
+import { admitAdvisorRoutes, callAdvisor, type AdvisorCallContext, type BackendConfig, type BackendResult } from "./backend.js";
 import { DEFAULT_PERSONAS, SYNTHESIZER_PROMPT, type Persona } from "./personas.js";
 import { backendLabel, resolveSeatBackend, textOnlyImageWarning, type SeatOptions } from "./detect.js";
 import type { BpxCouncilConfig } from "./config.js";
@@ -28,6 +28,8 @@ export interface CouncilInput {
 	seatOptions?: SeatOptions;
 	onAttempt?: (attempt: SeatAttempt) => void;
 	onPlan?: (seats: PlannedSeat[]) => void;
+	/** Invocation cancellation shared by every member and synthesis. */
+	signal?: AbortSignal;
 }
 
 export interface CouncilMember {
@@ -90,10 +92,7 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 	const synthBackend = resolveSeatBackend(input.synthesizer ?? config.council?.synthesizer, backend, input.seatOptions);
 	// A later seat must not invalidate an image request after parallel calls start.
 	const routes = [...assigned.map((a) => a.backend), synthBackend];
-	for (const route of routes) {
-		const error = advisorTransportError(route);
-		if (error) throw new Error(error);
-	}
+	const authority = admitAdvisorRoutes(routes);
 	for (const route of new Map(routes.map((item) => [backendLabel(item), item])).values()) {
 		const warning = textOnlyImageWarning(route);
 		if (warning) note(warning);
@@ -101,6 +100,8 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 	input.onPlan?.([...assigned.map(({ persona }) => ({ seat: persona.name, round: null })),
 		{ seat: "synthesizer", round: null }]);
 
+	if (input.signal?.aborted) return { ok: false, error: "Council cancelled" };
+	const started = new Set<string>();
 	const distinct = new Set(assigned.map((a) => a.label));
 	note(
 		distinct.size > 1
@@ -111,8 +112,10 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 	// Fan out — each persona gets its own call in parallel, on its own backend.
 	const memberResults = await Promise.allSettled(
 		assigned.map(async (a) => {
+			if (input.signal?.aborted) return { ok: false, text: "", error: "Advisor call cancelled" };
+			started.add(a.persona.name);
 			let result: BackendResult;
-			try { result = await callCouncilMember(a.persona, userMessage, a.backend); }
+			try { result = await callCouncilMember(a.persona, userMessage, a.backend, input.signal, authority.get(a.backend)); }
 			catch { result = { ok: false, text: "", error: "Advisor call failed unexpectedly" }; }
 			note(`── ${a.persona.name} (${a.label}) ${result.ok ? "answered" : "failed"}`);
 			return result;
@@ -123,7 +126,7 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 		const r = memberResults[i];
 		const base = { persona: a.persona.name, stance: a.persona.stance, model: a.label };
 		const result: BackendResult = r.status === "fulfilled" ? r.value : { ok: false, text: "", error: "Advisor call failed unexpectedly" };
-		input.onAttempt?.(seatAttempt(a.persona.name, null, a.backend, result));
+		if (started.has(a.persona.name)) input.onAttempt?.(seatAttempt(a.persona.name, null, a.backend, result));
 		return { ...base, ok: result.ok, text: result.text };
 	});
 
@@ -133,7 +136,7 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 
 	const successful = members.filter((m) => m.ok);
 	if (successful.length === 0) {
-		return { ok: false, error: "All council members failed." };
+		return { ok: false, error: input.signal?.aborted ? "Council cancelled" : "All council members failed." };
 	}
 
 	// Header carries the model, so a reader can see which one argued what —
@@ -151,12 +154,17 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 
 	const synthMessage = `${synthesisInput}\n\n=== Original Question ===\n${question}`;
 
+	if (input.signal?.aborted) return { ok: false, error: "Council cancelled", partial: transcript, members };
 	// Synthesize — one more call that merges the verdicts.
 	note(`── synthesizing verdict · ${backendLabel(synthBackend)} …`);
-	const synthResult = await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthBackend);
+	const synthSignal = synthBackend.type === "tmux" ? undefined : input.signal;
+	const synthResult = authority.has(synthBackend) ? await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthBackend, synthSignal, authority.get(synthBackend)) : synthSignal === undefined
+		? await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthBackend)
+		: await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthBackend, synthSignal);
 	input.onAttempt?.(seatAttempt("synthesizer", null, synthBackend, synthResult));
 	note("");
 
+	if (input.signal?.aborted) return { ok: false, error: "Council cancelled", partial: transcript, members };
 	if (!synthResult.ok) {
 		// Preserve paid-for member answers, but don't claim a verdict was produced.
 		return { ok: false, error: `Synthesis failed (${backendLabel(synthBackend)}): ${synthResult.error}`,
@@ -168,10 +176,15 @@ export async function runCouncil(input: CouncilInput): Promise<CouncilResult> {
 	return { ok: true, text: `${transcript}\n\n### Verdict · ${backendLabel(synthBackend)}\n${synthResult.text}`, members };
 }
 
+/** Call one member with shared invocation cancellation. @param persona Seat prompt. @param userMessage Context. @param backend Route. @param signal Cancellation. @returns Settled transport result. */
 async function callCouncilMember(
 	persona: Persona,
 	userMessage: string,
 	backend: BackendConfig,
+	signal?: AbortSignal,
+	context?: AdvisorCallContext,
 ): Promise<BackendResult> {
-	return callAdvisor(persona.systemPrompt, userMessage, backend);
+	// PTY cannot accept abort; keep existing route semantics and wait bounded completion.
+	const callSignal = backend.type === "tmux" ? undefined : signal;
+	return context ? callAdvisor(persona.systemPrompt, userMessage, backend, callSignal, context) : callSignal === undefined ? callAdvisor(persona.systemPrompt, userMessage, backend) : callAdvisor(persona.systemPrompt, userMessage, backend, callSignal);
 }

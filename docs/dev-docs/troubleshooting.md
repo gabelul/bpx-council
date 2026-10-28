@@ -7,6 +7,63 @@ Not a changelog — see `CHANGELOG.md` for releases.
 
 ---
 
+## Guarded Pi model discovery returned an empty catalog
+
+Pi's guarded `--print --mode text --list-models` invocation succeeded, but its
+table wasn't on stdout. Pi 1.0.x takes over stdout for print/text runtime and
+sends metadata `console.log` output to stderr.
+
+Keep the safety flags. For Pi only, collect bounded stderr privately, then parse
+validated six-column table rows after a successful exit. Never show raw stderr
+or model objects: either can contain authentication details. Discovery runs in
+a private cwd because Pi's startup migrations still rename project `.pi/commands`
+even with resources disabled. Legacy global migrations remain Pi's own behavior.
+
+Native integration tests are opt-in through `BPX_TEST_PI_CLI`, use a temporary
+HOME/agent directory, and send inference only to a loopback SSE fixture. They
+prove the transport without touching a user's account. Pi's own Node requirement
+is separate from this CLI's Node requirement.
+
+**Files:** `src/pi-backend.ts`, `src/models-list.ts`, `tests/pi-backend.test.ts`
+
+---
+
+## Closing settings interrupted cancellation cleanup
+
+Escape aborted a model lookup, but Ctrl-C immediately afterward returned from
+the workbench before the lookup's forced-kill timer and private-cwd cleanup ran.
+`index.ts` calls `process.exit`, so those pending callbacks never got a turn.
+An AbortSignal assertion passed; the real PTY test found the leftover directory.
+
+Track discovery promises. Restore the terminal promptly, then await cancelled
+jobs before returning to the caller. Lookup cancellation already has a bounded
+process-group TERM/KILL path. Test both the child process and its scratch directory
+after the actual CLI exits, not only the signal or controller state.
+
+**Files:** `src/config-draft.ts`, `src/config-workbench.tsx`
+
+---
+
+## A field library treated forward Delete as Backspace
+
+`ink-text-input` treated both deletion keys as backward deletion. Snapshot tests
+couldn't see it; a PTY caret/paste/Delete sequence removed the inserted text
+instead of the suffix. Its fields also lacked Home/End and Ctrl-A/E editing.
+
+The workbench keeps Ink for rendering and owns its small controlled field.
+Ink labels both ASCII DEL (the usual Backspace byte) and CSI `3~` as `key.delete`,
+so the field remembers that distinction from the same stdin stream. It edits by
+Unicode code point and scrolls by terminal cells. Test real key bytes as well as
+the pure mutation helper.
+
+Don't send bracketed-paste wrappers unless the application enabled that terminal
+mode. Ink's plain multi-character paste contract doesn't enable it; pretending
+otherwise tests a protocol the terminal wouldn't send.
+
+**Files:** `src/workbench-input.tsx`, `tests/workbench-input.test.ts`
+
+---
+
 ## Running from home rejected the global config as project config
 
 **Symptom**
@@ -650,3 +707,11 @@ settings.json — the guard travels with the hazard.
 Also: `treeDiffers(x, x) === false` is a correct answer to the wrong question.
 "Does the destination match the source" quietly assumes they're different paths.
 When source and target can be the same, test identity before difference.
+
+## SDK stock endpoints, small probes and auth drain
+
+See [sdk-standalone-qa.md](sdk-standalone-qa.md) for native fixtures and limits. Changing model baseUrl to loopback hid SDK stock OpenAI credential classification: non-sk fixtures triggered OAuth behavior and lost max_output_tokens. Keep stock metadata and remap only test fetch. Use sk-shaped OpenAI fixtures and refuse unsupported credentials before inference.
+
+The old eight-token SDK test and 2400-token generation overrides passed fake-service tests but broke OpenAI minimums and legacy Anthropic thinking. SDK actions now retain the admitted ceiling/effort and disclose quota/limits before consent. Real SDK action tests cover probes, literal JSON generation, saved Gut-check ceilings and zero-call invalid budgets. SDK-zero usage after errors is unknown, not a reported zero. Known wire-credential echoes and empty successful replies are refused; failed text is blanked while positive usage/completed seats survive.
+
+Neither native SDK abort nor Promise.race proves refresh/storage shutdown. Keep the owned operation barrier through lock acquisition, rotation, commit and unlock; headless interrupts also wait for stdout. SDK OAuth callback fixtures use a fixed loopback port: run Node runtime suites sequentially on the same machine.

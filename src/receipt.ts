@@ -44,7 +44,7 @@ export function newReceipt(): Receipt {
 export function seatAttempt(seat: string, round: number | null, backend: BackendConfig, result: BackendResult): SeatAttempt {
 	return { seat, round, route: { type: backend.type,
 		command: "command" in backend ? backend.command : null,
-		provider: backend.type === "http" ? backend.provider : null,
+		provider: backend.type === "http" || backend.type === "sdk" ? backend.provider : null,
 		label: backendLabel(backend), model: backend.type === "http" ? httpModel(backend) ?? null : backend.type === "cli" && backend.args?.length ? null : backend.model ?? null,
 		effort: backend.type === "cli" && backend.args?.length ? null : "effort" in backend ? backend.effort ?? null : null }, status: result.ok ? "complete" : "failed",
 		error: result.ok ? null : result.error ?? "unknown error", usage: result.usage ?? null };

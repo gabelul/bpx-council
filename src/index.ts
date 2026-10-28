@@ -16,6 +16,7 @@ import { buildFileContext, readTextAttachments, validateImages } from "./attachm
 import { imageSupport } from "./cli-registry.js";
 import { detectBackend, parseBackendArg, resolveSeatBackend, textOnlyImageWarning, type ExplicitBackend } from "./detect.js";
 import { runSolo } from "./solo.js";
+import { runInvocation, flushInvocationOutput } from "./invocation-lifecycle.js";
 import { runCouncil } from "./council.js";
 import { runDebate } from "./debate.js";
 import { parseArgs, type Mode } from "./args.js";
@@ -112,6 +113,10 @@ Config:
   HTTP maxOutputTokens sets max_tokens; CLI gets a prompt request only.`;
 
 const CONFIG_HELP = `bpx-council config / setup — configure your advisor.
+
+Backends → Check installed CLIs reports local installation/version facts.
+Connection tests are separate, explicitly confirmed model calls.
+Manual backend entry accepts a CLI name/route, not an API key.
 
 bpx-council auto-detects Anthropic HTTP, Codex (read-only), or tool-disabled
 Claude CLI when available; other CLIs need an explicit trusted choice. This is the
@@ -364,13 +369,13 @@ async function main(): Promise<void> {
 		if (args.effort || !b.effort) b.effort = effortOverride;
 	}
 
-	if (args.isolate && config.solo.backend) {
-		(config.solo.backend as { isolate?: boolean }).isolate = true;
+	if (args.isolate && config.solo.backend?.type === "cli") {
+		config.solo.backend.isolate = true;
 	}
 
 	const modelOverride = args.model ?? process.env.BPX_COUNCIL_MODEL ?? process.env.ANTHROPIC_MODEL;
-	if (modelOverride && config.solo.backend) {
-		(config.solo.backend as { model?: string }).model = modelOverride;
+	if (modelOverride && config.solo.backend && (args.model !== undefined || config.solo.backend.type !== "sdk")) {
+		config.solo.backend.model = modelOverride;
 	}
 	// --timeout raises the per-call ceiling. Debate makes up to nine sequential
 	// calls, so the default 120s is the difference between a verdict and a
@@ -386,7 +391,7 @@ async function main(): Promise<void> {
 			: resolveSeatBackend(config.gutCheck?.backend, config.solo.backend as AdvisorBackend,
 				{ timeoutMs: args.timeoutMs, isolate: args.isolate })
 		: undefined;
-	if (gutBackend?.type === "http" && config.gutCheck?.maxOutputTokens !== undefined) {
+	if ((gutBackend?.type === "http" || gutBackend?.type === "sdk") && config.gutCheck?.maxOutputTokens !== undefined) {
 		gutBackend.maxOutputTokens = config.gutCheck.maxOutputTokens;
 	}
 
@@ -398,6 +403,7 @@ async function main(): Promise<void> {
 		// the first call; Solo only needs the shared backend checked here.
 		if (mode === "solo" || mode === "gut-check") {
 			const backend = (mode === "gut-check" ? gutBackend : config.solo.backend) as { type?: string; command?: string; provider?: string; model?: string; images?: string[]; imageData?: typeof imageData } | undefined;
+			if (backend?.type === "sdk") throw new Error("Error: SDK advisor image transport is not supported; use codex or anthropic HTTP.");
 			const command = backend?.type === "http" ? backend.provider : backend?.command;
 			const support = backend?.type === "tmux" ? undefined : command ? imageSupport(command) : undefined;
 			if (!support) {
@@ -420,58 +426,56 @@ async function main(): Promise<void> {
 	const onAttempt = activeReceipt ? (attempt: Parameters<typeof addAttempt>[1]) => addAttempt(activeReceipt!, attempt) : undefined;
 	const onPlan = activeReceipt ? (seats: Receipt["planned"]) => { activeReceipt!.planned = seats; } : undefined;
 
-	// `partial` carries completed Council members or Debate rounds if synthesis fails.
-	let result: { ok: true; text: string } | { ok: false; error: string; partial?: string };
+	// Install inference-only SIGINT handler, keeping it through SDK persistence drain.
+	const invocation = await runInvocation(async (signal) => {
+		// `partial` carries completed Council members or Debate rounds if synthesis fails.
+		let result: { ok: true; text: string } | { ok: false; error: string; partial?: string };
 
-	switch (mode) {
-		case "council": {
-			const r = await runCouncil({ ...commonArgs, backends: args.backends, synthesizer: args.synthesizer, seatOptions, onAttempt, onPlan });
-			result = r.ok ? { ok: true, text: r.text } : { ok: false, error: r.error, partial: r.partial };
-			break;
+		switch (mode) {
+			case "council": {
+				const r = await runCouncil({ ...commonArgs, backends: args.backends, synthesizer: args.synthesizer, seatOptions, onAttempt, onPlan, signal });
+				result = r.ok ? { ok: true, text: r.text } : { ok: false, error: r.error, partial: r.partial };
+				break;
+			}
+			case "debate": {
+				const r = await runDebate({ ...commonArgs, rounds: args.rounds, advocate: args.advocate, critic: args.critic,
+					synthesizer: args.synthesizer, seatOptions, onAttempt, onPlan, signal });
+				result = r;
+				break;
+			}
+			case "gut-check": {
+				// CLI cannot enforce token ceilings; its bound is an instruction only.
+				const limit = config.gutCheck?.maxOutputTokens;
+				const capInstruction = gutBackend?.type !== "http" && gutBackend?.type !== "sdk" && limit
+					? ` Aim for at most ${limit} output tokens; this is a prompt request, not an enforced limit.` : "";
+				const r = await runSolo({
+					...commonArgs,
+					backend: gutBackend,
+					seat: "gut-check",
+					question: `${args.question}\n\n(Reply tersely — one or two sentences. Does this smell off?${capInstruction})`,
+					onAttempt, onPlan, signal,
+				});
+				result = r;
+				break;
+			}
+			default: {
+				result = await runSolo({ ...commonArgs, onAttempt, onPlan, signal });
+				break;
+			}
 		}
-		case "debate": {
-			const r = await runDebate({ ...commonArgs, rounds: args.rounds, advocate: args.advocate, critic: args.critic,
-				synthesizer: args.synthesizer, seatOptions, onAttempt, onPlan });
-			result = r;
-			break;
-		}
-		case "gut-check": {
-			// CLI cannot enforce token ceilings; its bound is an instruction only.
-			const limit = config.gutCheck?.maxOutputTokens;
-			const capInstruction = gutBackend?.type !== "http" && limit
-				? ` Aim for at most ${limit} output tokens; this is a prompt request, not an enforced limit.` : "";
-			const r = await runSolo({
-				...commonArgs,
-				backend: gutBackend,
-				seat: "gut-check",
-				question: `${args.question}\n\n(Reply tersely — one or two sentences. Does this smell off?${capInstruction})`,
-				onAttempt,
-			});
-			result = r;
-			break;
-		}
-		default: {
-			result = await runSolo({ ...commonArgs, onAttempt });
-			break;
-		}
-	}
-
-	if (activeReceipt) {
-		printReceipt(settleReceipt(activeReceipt, result));
-		if (!result.ok) process.exitCode = 1;
-		return;
-	}
-
-	if (!result.ok) {
-		// Print salvaged work to stdout first so a pipe or redirect still
-		// captures it, then fail loudly. Minutes of completed rounds shouldn't
-		// vanish because the last call timed out.
-		if (result.partial) console.log(result.partial);
-		console.error(`Council failed: ${result.error}`);
-		process.exit(1);
-	}
-
-	console.log(result.text);
+		return result;
+	}, undefined, async (value, cancelled) => {
+		const result = cancelled && value.ok ? { ok: false as const, error: "Invocation cancelled", partial: value.text } : value;
+		if (activeReceipt) printReceipt(settleReceipt(activeReceipt, result));
+		else if (!result.ok) {
+			if (result.partial) console.log(result.partial);
+			console.error(`Council failed: ${result.error}`);
+		} else console.log(result.text);
+		await flushInvocationOutput();
+	});
+	if (invocation.cancelled) { process.exitCode = 130; return; }
+	if (!invocation.value.ok) { process.exitCode = 1; return; }
+	if (activeReceipt) return;
 
 	// After the answer's on stdout: on a fresh interactive run with nothing
 	// wired up, offer the wizard once. If it prompted, skip the update notice —
@@ -490,5 +494,5 @@ main().catch((e) => {
 	const message = e instanceof Error ? e.message : String(e);
 	if (activeReceipt) printReceipt(settleReceipt(activeReceipt, { ok: false, error: message }));
 	else console.error(message.startsWith("Error:") ? message : `bpx-council: ${message}`);
-	process.exitCode = 1;
+	if (process.exitCode !== 130) process.exitCode = 1;
 });

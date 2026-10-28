@@ -15,3 +15,6 @@ dist/
 # Local agent state — session transcripts, project memory. Never commit.
 .omc/
 .omo/
+
+# Python bytecode from QA scripts
+__pycache__/

@@ -1,5 +1,6 @@
 import type { BpxCouncilConfig } from "./config.js";
 import { DEFAULT_PERSONAS } from "./personas.js";
+import { isSdkProviderId, parseSdkRoute } from "./sdk-route.js";
 
 const bundled = new Set(DEFAULT_PERSONAS.map((persona) => persona.name));
 const safeName = /^[a-z][a-z0-9-]{0,31}$/;
@@ -30,6 +31,10 @@ export function validateConfig(value: unknown, path: string, project: boolean): 
 	const route = (v: unknown, key: string) => {
 		if (v === null) return;
 		string(v, key);
+		if ((v as string).startsWith("sdk:")) {
+			if (project) fail(key, "cannot select SDK routes in project config; use global config or explicit --config");
+			try { parseSdkRoute(v as string); } catch { fail(key, "contains an invalid SDK route"); }
+		}
 		if (project && !/^anthropic(?::[A-Za-z0-9][A-Za-z0-9._/+-]{0,127})?(?:@(low|medium|high|xhigh|max|ultra))?$/.test(v as string)) {
 			fail(key, "must use anthropic with a safe model/effort; use global config or explicit --config for CLI routes");
 		}
@@ -65,14 +70,19 @@ export function validateConfig(value: unknown, path: string, project: boolean): 
 		if (solo.backend !== undefined) {
 			const backend = object(solo.backend, "solo.backend");
 			keys(backend, "solo.backend", ["type", "command", "args", "timeoutMs", "startupMs", "sessionPrefix", "isolate", "images", "provider", "model", "effort", "apiKeyEnv", "baseUrl"]);
-			if (!["cli", "http", "tmux"].includes(backend.type as string)) fail("solo.backend.type", "is invalid");
+			if (!["cli", "http", "tmux", "sdk"].includes(backend.type as string)) fail("solo.backend.type", "is invalid");
 			if (project && backend.command !== undefined) fail("solo.backend.command", "cannot select a CLI in project config; use global config or explicit --config");
 			if (project && backend.type !== "http") fail("solo.backend.type", "project config accepts only Anthropic HTTP; use global config or explicit --config for CLI routes");
 			if (backend.command !== undefined) string(backend.command, "solo.backend.command");
-			if (backend.provider !== undefined && !["anthropic", "openai", "google"].includes(backend.provider as string)) fail("solo.backend.provider", "is invalid");
+			if (backend.type === "sdk") {
+				if (typeof backend.provider !== "string" || !isSdkProviderId(backend.provider)) fail("solo.backend.provider", "must be a safe SDK provider ID");
+				for (const key of ["command", "args", "startupMs", "sessionPrefix", "isolate", "apiKeyEnv", "baseUrl"]) if (backend[key] !== undefined) fail(`solo.backend.${key}`, "cannot be set on an SDK route");
+				if (backend.model !== undefined && (typeof backend.model !== "string" || !backend.model || /[\s\x00-\x1f\x7f-\x9f]/.test(backend.model))) fail("solo.backend.model", "must be a safe SDK model ID");
+				if (backend.effort !== undefined && (typeof backend.effort !== "string" || !/^[a-z][a-z0-9-]{0,31}$/.test(backend.effort))) fail("solo.backend.effort", "must be a safe SDK effort ID");
+			} else if (backend.provider !== undefined && !["anthropic", "openai", "google"].includes(backend.provider as string)) fail("solo.backend.provider", "is invalid");
 			if ((backend.type === "cli" || backend.type === "tmux") && !backend.command) fail("solo.backend.command", "is required");
 			if (backend.type === "http" && !backend.provider) fail("solo.backend.provider", "is required");
-			if (backend.type !== "http" && backend.provider !== undefined) fail("solo.backend.provider", "requires an HTTP backend");
+			if (backend.type !== "http" && backend.type !== "sdk" && backend.provider !== undefined) fail("solo.backend.provider", "requires an HTTP or SDK backend");
 			if (backend.type === "http" && backend.command !== undefined) fail("solo.backend.command", "requires a CLI or tmux backend");
 			if (backend.type !== "http" && (backend.baseUrl !== undefined || backend.apiKeyEnv !== undefined)) fail("solo.backend.baseUrl/apiKeyEnv", "requires an HTTP backend");
 			if (backend.type !== "cli" && backend.args !== undefined) fail("solo.backend.args", "requires a CLI backend");

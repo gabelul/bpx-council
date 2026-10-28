@@ -1,0 +1,8 @@
+(version 1)
+(allow default)
+(deny network*)
+(allow network-bind (local ip "localhost:*"))
+(allow network-inbound (local ip "localhost:*"))
+(allow network-outbound (remote ip "localhost:*"))
+(deny file-read* file-write* (subpath (param "PRIVATE_HOME")))
+(deny file-read* file-write* (subpath (param "PRIVATE_REPO")))

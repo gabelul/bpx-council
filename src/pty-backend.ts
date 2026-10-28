@@ -1,8 +1,9 @@
 /**
  * pty-backend — drive a CLI agent (codex/claude) in INTERACTIVE mode via tmux.
  *
- * Subscription-preserving: runs the agent in its interactive TUI (the same mode
- * you use manually), so it draws from subscription quota, not API credits.
+ * Provides an interactive terminal, not a billing guarantee. The agent's
+ * effective credentials decide subscription versus API use; tmux does not
+ * select authentication or prevent API credentials from overriding a login.
  *
  * Patterns adopted from primeline-ai/claude-tmux-orchestration (proven in
  * production): literal send-keys + separate Enter, paste-buffer for multiline,

@@ -57,6 +57,7 @@ import { runMultiselect } from "./multiselect.js";
 import { printStarNudge } from "./nudge.js";
 import { inspectRetiredHook, verifyGroups } from "./lifecycle.js";
 import { bold, cyan, dim, green, red, yellow } from "./style.js";
+import { defaultBackendDiagnostics, type BackendDiagnostic, type BackendDiagnostics } from "./backend-diagnostics.js";
 
 /** Markers that make the AGENTS.md block replaceable instead of duplicable. */
 const BLOCK_START = "<!-- bpx-council:start -->";
@@ -876,12 +877,69 @@ function looksLikeProjectRoot(cwd: string): boolean {
 	return PROJECT_MARKERS.some((marker) => existsSync(join(cwd, marker)));
 }
 
+/** Print installation/version facts without implying account authentication.
+ * @param rows Shared local inventory. @returns No value.
+ */
+function printBackendInventory(rows: BackendDiagnostic[]): void {
+	const labels = { installed: "Installed", missing: "Not found", unusable: "Installed; advisor unsupported", "key-present": "API key present", "key-missing": "API key missing" };
+	for (const row of rows) {
+		const checked = row.version ? ` · ${row.version}` : row.check === "failed" ? " · Version check failed" : row.check === "version-unavailable" ? " · Version unavailable" : row.check === "checking" ? " · Checking version" : row.check === "cancelled" ? " · Check cancelled" : row.check === "unsupported" ? " · Version check unsupported" : "";
+		console.log(`  ${row.name}: ${labels[row.status]}${checked}`);
+	}
+}
+
+/** Offer shared CLI checks only during explicit interactive setup.
+ * @param diagnostics Local inventory/version service. @param ask Cancellable user confirmation.
+ * @returns Zero to continue setup; 130 after interrupted check cleanup.
+ */
+export async function offerInstallBackendChecks(diagnostics: BackendDiagnostics = defaultBackendDiagnostics, ask: (question: string, defaultYes: boolean) => Promise<boolean> = confirm): Promise<number> {
+	console.log("\nAdvisor backends (local installation only):");
+	printBackendInventory(diagnostics.inventory());
+	console.log("No model calls. CLI startup may update its own legacy settings.");
+	if (!await ask("Check installed CLI versions now?", false)) return 0;
+	const abort = new AbortController();
+	let interrupted = false;
+	/** Cancel actual child processes before returning to caller's process.exit. */
+	const interrupt = (): void => { interrupted = true; abort.abort(); };
+	process.on("SIGINT", interrupt);
+	const input = process.stdin;
+	const ownsInput = input.isTTY === true && typeof input.setRawMode === "function";
+	const wasRaw = input.isRaw === true;
+	const wasPaused = input.isPaused();
+	/** Discard typeahead while checks own the terminal; only Ctrl-C can cancel. @param chunk Terminal input. */
+	const onInput = (chunk: Buffer | string): void => { if (chunk.toString().includes("\x03")) interrupt(); };
+	const seen = new Map<string, BackendDiagnostic["check"]>();
+	/** Print only safe app-owned stage changes, never subprocess output. @param rows Shared immutable progress. */
+	const progress = (rows: BackendDiagnostic[]): void => {
+		for (const row of rows) {
+			if (row.check === "not-checked" || row.check === "not-applicable" || seen.get(row.name) === row.check) continue;
+			seen.set(row.name, row.check);
+			if (row.check === "checking") console.log(`  Checking ${row.name}…`);
+			else printBackendInventory([row]);
+		}
+	};
+	try {
+		if (ownsInput) { input.setRawMode(true); input.on("data", onInput); input.resume(); }
+		console.log("Checking installed CLIs; Ctrl-C cancels. Other input is ignored.");
+		const rows = await diagnostics.check(abort.signal, progress);
+		printBackendInventory(rows);
+		return interrupted ? 130 : 0;
+	} catch {
+		console.error(interrupted ? "CLI checks cancelled." : "Local CLI checks failed. Continue setup; retry in config → Backends.");
+		return interrupted ? 130 : 0;
+	} finally {
+		process.off("SIGINT", interrupt);
+		if (ownsInput) { input.off("data", onInput); input.setRawMode(wasRaw); if (wasPaused) input.pause(); }
+	}
+}
+
 /**
  * Run the installer. Interactive unless flags or a non-TTY say otherwise.
  *
+ * @param opts Explicit integration settings. @param diagnostics Optional shared local checks.
  * @returns Process exit code — non-zero if any action failed.
  */
-export async function runInstall(opts: InstallOptions): Promise<number> {
+export async function runInstall(opts: InstallOptions, diagnostics: BackendDiagnostics = defaultBackendDiagnostics): Promise<number> {
 	if (opts.withHook) {
 		console.error("--with-hook is retired: the every-Stop paid consult is unsafe. No hook installed; use uninstall to remove exact legacy entry.");
 		return 1;
@@ -902,6 +960,7 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 
 	// Interactive only when we have a terminal and the user hasn't pre-answered.
 	const interactive = isTty && !opts.yes && !opts.dryRun && !opts.verify && !opts.agents?.length;
+	if (interactive && await offerInstallBackendChecks(diagnostics) === 130) return 130;
 
 	let chosen: AgentDef[];
 	let scope: Scope;

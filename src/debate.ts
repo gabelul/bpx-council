@@ -7,7 +7,7 @@
  * sides for genuinely contentious calls.
  */
 
-import { advisorTransportError, callAdvisor, type BackendConfig } from "./backend.js";
+import { admitAdvisorRoutes, callAdvisor, type BackendConfig } from "./backend.js";
 import { backendLabel, resolveSeatBackend, textOnlyImageWarning, type SeatOptions } from "./detect.js";
 import { SYNTHESIZER_PROMPT } from "./personas.js";
 import type { BpxCouncilConfig } from "./config.js";
@@ -25,6 +25,8 @@ export interface DebateInput {
 	seatOptions?: SeatOptions;
 	onAttempt?: (attempt: SeatAttempt) => void;
 	onPlan?: (seats: PlannedSeat[]) => void;
+	/** Invocation cancellation stops future turns after current transport drains. */
+	signal?: AbortSignal;
 }
 
 export type DebateResult =
@@ -67,10 +69,11 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 	const synthesizer = resolveSeatBackend(input.synthesizer ?? config.debate?.synthesizer, backend, input.seatOptions);
 	// Check all routes once, before a sequential round can spend its first call.
 	const routes = [advocate, critic, synthesizer];
-	for (const route of routes) {
-		const error = advisorTransportError(route);
-		if (error) throw new Error(error);
-	}
+	const authority = admitAdvisorRoutes(routes);
+	// PTY has no abort contract; preserve bounded normal calls under invocation gate.
+	const advocateSignal = advocate.type === "tmux" ? undefined : input.signal;
+	const criticSignal = critic.type === "tmux" ? undefined : input.signal;
+	const synthSignal = synthesizer.type === "tmux" ? undefined : input.signal;
 	for (const route of new Map(routes.map((item) => [backendLabel(item), item])).values()) {
 		const warning = textOnlyImageWarning(route);
 		if (warning) note(warning);
@@ -112,6 +115,7 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 	};
 
 	for (let round = 0; round < rounds; round++) {
+		if (input.signal?.aborted) return bail("Debate cancelled");
 		// Advocate proposes (round 0) or rebuts (round > 0). The critic's
 		// attack is already the tail of `transcript`, so the rebuttal prompt
 		// only has to point at it.
@@ -120,18 +124,23 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 			: `${transcript}\n\nDefend your position against the critique above, or concede it. Be specific.`;
 
 		note(`── round ${round + 1}/${rounds}: advocate · ${backendLabel(advocate)} …`);
-		const advocateResult = await callAdvisor(ADVOCATE_PROMPT, advocateMsg, advocate);
+		const advocateResult = authority.has(advocate) ? await callAdvisor(ADVOCATE_PROMPT, advocateMsg, advocate, advocateSignal, authority.get(advocate)) : advocateSignal === undefined
+			? await callAdvisor(ADVOCATE_PROMPT, advocateMsg, advocate)
+			: await callAdvisor(ADVOCATE_PROMPT, advocateMsg, advocate, advocateSignal);
 		input.onAttempt?.(seatAttempt("advocate", round + 1, advocate, advocateResult));
 		if (!advocateResult.ok) return bail(`Advocate failed (round ${round + 1}): ${advocateResult.error}`);
 		const advocateTurn = `### Advocate (round ${round + 1}) · ${backendLabel(advocate)}\n${advocateResult.text}`;
 		transcript += `\n\n${advocateTurn}`;
 		roundLog.push(advocateTurn);
 
+		if (input.signal?.aborted) return bail("Debate cancelled");
 		// Critic attacks.
 		const criticMsg = `${transcript}\n\nCritically reassess the advocate's position. Do not reflexively agree.`;
 
 		note(`── round ${round + 1}/${rounds}: critic · ${backendLabel(critic)} …`);
-		const criticResult = await callAdvisor(CRITIC_PROMPT, criticMsg, critic);
+		const criticResult = authority.has(critic) ? await callAdvisor(CRITIC_PROMPT, criticMsg, critic, criticSignal, authority.get(critic)) : criticSignal === undefined
+			? await callAdvisor(CRITIC_PROMPT, criticMsg, critic)
+			: await callAdvisor(CRITIC_PROMPT, criticMsg, critic, criticSignal);
 		input.onAttempt?.(seatAttempt("critic", round + 1, critic, criticResult));
 		if (!criticResult.ok) return bail(`Critic failed (round ${round + 1}): ${criticResult.error}`);
 		const criticTurn = `### Critic (round ${round + 1}) · ${backendLabel(critic)}\n${criticResult.text}`;
@@ -139,11 +148,15 @@ export async function runDebate(input: DebateInput): Promise<DebateResult> {
 		roundLog.push(criticTurn);
 	}
 
+	if (input.signal?.aborted) return bail("Debate cancelled");
 	// Synthesize.
 	note(`── synthesizing verdict · ${backendLabel(synthesizer)} …`);
 	const synthMessage = `${transcript}\n\n=== Original Question ===\n${question}`;
-	const synthResult = await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthesizer);
+	const synthResult = authority.has(synthesizer) ? await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthesizer, synthSignal, authority.get(synthesizer)) : synthSignal === undefined
+		? await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthesizer)
+		: await callAdvisor(SYNTHESIZER_PROMPT, synthMessage, synthesizer, synthSignal);
 	input.onAttempt?.(seatAttempt("synthesizer", null, synthesizer, synthResult));
+	if (input.signal?.aborted) return bail("Debate cancelled");
 	if (!synthResult.ok) return bail(`Synthesis failed: ${synthResult.error}`);
 
 	note("");

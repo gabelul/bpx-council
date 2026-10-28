@@ -12,8 +12,8 @@ import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { validateConfig } from "./config-validation.js";
 import type { Stance } from "./personas.js";
 
-export interface BackendConfig {
-	type: "cli" | "http" | "tmux";
+/** Stored settings shared by legacy routes and explicit SDK pins. */
+export interface BackendSettings {
 	command?: string;
 	args?: string[];
 	timeoutMs?: number;
@@ -21,8 +21,6 @@ export interface BackendConfig {
 	sessionPrefix?: string;
 	isolate?: boolean;
 	images?: string[];
-	/** HTTP only: the provider name. */
-	provider?: "anthropic" | "openai" | "google";
 	/** The model ID — pinned for CLI backends too, not just HTTP. */
 	model?: string;
 	/**
@@ -36,6 +34,13 @@ export interface BackendConfig {
 	/** HTTP only: the API base URL. */
 	baseUrl?: string;
 }
+
+/** HTTP keeps its three-provider allowlist; SDK provider IDs live in their own namespace. */
+export type BackendConfig = BackendSettings & (
+	| { type: "cli" | "tmux"; provider?: "anthropic" | "openai" | "google" }
+	| { type: "http"; provider?: "anthropic" | "openai" | "google" }
+	| { type: "sdk"; provider: string }
+);
 
 export interface AdvisorConfig {
 	/**
@@ -77,7 +82,7 @@ export interface DebateConfig {
 export interface GutCheckConfig {
 	/** Independent route; null resets to Solo across config layers. */
 	backend?: string | null;
-	/** Anthropic HTTP max_tokens; CLI routes receive a prompt-only length request. */
+	/** Hard HTTP/SDK output-token ceiling; CLI routes receive a prompt-only length request. */
 	maxOutputTokens?: number;
 }
 

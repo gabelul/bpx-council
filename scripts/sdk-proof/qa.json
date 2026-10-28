@@ -1,0 +1,718 @@
+{
+  "schemaVersion": 1,
+  "scope": "FIRST HARD GATE only; no production integration",
+  "status": "CONDITIONAL-PASS-LOWER-LEVEL",
+  "node": "v24.21.0",
+  "generatedAt": "2026-10-08T23:19:50.441Z",
+  "prefix": "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu",
+  "command": "node scripts/sdk-proof/run.mjs",
+  "sdkPackages": [
+    {
+      "path": "../../../../../../private/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/node_modules/@earendil-works/chord",
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@earendil-works/chord/-/chord-1.1.0.tgz",
+      "integrity": "sha512-gsHzKfyQ3t0ZIQ3cLBjJ5Vqy1TYnFyruHIV3g3BwmulCDYe5BW4yT9vaJk9QzN6YANILIO75uzuq+Gdxtzz1og=="
+    },
+    {
+      "path": "../../../../../../private/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/node_modules/@earendil-works/pi-agent-core",
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-1.1.0.tgz",
+      "integrity": "sha512-aX1KZomNCPmwYnXa3OivF3VYLJ+WPUkIJlEIZTgwdOZdY/+oToWTQ334WYpQeOz9POpiYFNMJLPwIhXQ4e48kg=="
+    },
+    {
+      "path": "../../../../../../private/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/node_modules/@earendil-works/pi-ai",
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-1.1.0.tgz",
+      "integrity": "sha512-1T7LAkc/5Bvc0v6w4vAGVdCrli0o/E0pEmYKTnixu95vSFArBjvbhS/G4ZwI0RUePgf0Imcu0VyqlM4EcXxqfw=="
+    },
+    {
+      "path": "../../../../../../private/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/node_modules/@earendil-works/pi-codemode",
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@earendil-works/pi-codemode/-/pi-codemode-1.1.0.tgz",
+      "integrity": "sha512-8Asc2AzhoNaXS1snmRFa96OhcWIlFM5k1Kuiz6p2DvIYgi5QHQccRAmDVY9oO92TzWrizpvQpconZGQ7JhlI7Q=="
+    },
+    {
+      "path": "../../../../../../private/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/node_modules/@earendil-works/pi-coding-agent",
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-1.1.0.tgz",
+      "integrity": "sha512-SeEi/4hdcHNgA9UWlefZl7ZZpm3dzi2OoxNjDHsBJ9o298LNOtbL4DGKgitlEj6uCTccvtw6f2hlCkTPVJ2RXg=="
+    },
+    {
+      "path": "../../../../../../private/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/node_modules/@earendil-works/pi-mcp",
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@earendil-works/pi-mcp/-/pi-mcp-1.1.0.tgz",
+      "integrity": "sha512-xGKwvu3SvVTeoIx8Z7UGoJprB4VK20wKORMhufcWGx61fIauhu3J+UqfB5eeoF1oE/geYBA598K6nh1SdABQkg=="
+    },
+    {
+      "path": "../../../../../../private/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/node_modules/@earendil-works/pi-telemetry",
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@earendil-works/pi-telemetry/-/pi-telemetry-1.1.0.tgz",
+      "integrity": "sha512-8gAK05/2pPozZZz6hCLOi8x2vsqzvsmO9gG92kbvuvTPm0qMHaFlaXX98ndXsrOi5pmzha7vNLguuG4+0Rgxjw=="
+    },
+    {
+      "path": "../../../../../../private/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/node_modules/@earendil-works/pi-tui",
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-1.1.0.tgz",
+      "integrity": "sha512-v7wkS0y2ErZvZkSfemqd9RrBZJ5x6p8Ujsv7NdJj01IXJyFM0kNL6rMdcKcvTe7EVTd6ugvDB9VPZSoaBF9QxQ=="
+    }
+  ],
+  "installation": {
+    "codingAgentMs": 6115.790375,
+    "lowerOnlyMs": 1926.9283340000002,
+    "scriptsDisabled": true,
+    "codingAgent": {
+      "bytes": 122588737,
+      "allocatedBytes": 166727680,
+      "files": 15045
+    },
+    "lowerOnly": {
+      "bytes": 68841942,
+      "allocatedBytes": 104759296,
+      "files": 11857
+    }
+  },
+  "startup": {
+    "ModelRuntime": [
+      {
+        "elapsedMs": 307.18575000000004,
+        "rssBytes": 147701760,
+        "sentinelReads": 0,
+        "processWallMs": 354.6739579999994
+      },
+      {
+        "elapsedMs": 288.165459,
+        "rssBytes": 146964480,
+        "sentinelReads": 0,
+        "processWallMs": 331.9890410000007
+      },
+      {
+        "elapsedMs": 284.557417,
+        "rssBytes": 147472384,
+        "sentinelReads": 0,
+        "processWallMs": 330.0003340000003
+      },
+      {
+        "elapsedMs": 289.815291,
+        "rssBytes": 146391040,
+        "sentinelReads": 0,
+        "processWallMs": 334.794417000001
+      },
+      {
+        "elapsedMs": 289.755542,
+        "rssBytes": 146833408,
+        "sentinelReads": 0,
+        "processWallMs": 335.2460000000028
+      }
+    ],
+    "createModels": [
+      {
+        "elapsedMs": 6.221874999999999,
+        "rssBytes": 58933248,
+        "sentinelReads": 0,
+        "processWallMs": 41.26704099999915
+      },
+      {
+        "elapsedMs": 6.207749999999999,
+        "rssBytes": 58638336,
+        "sentinelReads": 0,
+        "processWallMs": 42.039708000000246
+      },
+      {
+        "elapsedMs": 6.327834000000001,
+        "rssBytes": 58703872,
+        "sentinelReads": 0,
+        "processWallMs": 42.25958299999911
+      },
+      {
+        "elapsedMs": 5.476542,
+        "rssBytes": 58703872,
+        "sentinelReads": 0,
+        "processWallMs": 40.367332999998325
+      },
+      {
+        "elapsedMs": 6.103334,
+        "rssBytes": 58343424,
+        "sentinelReads": 0,
+        "processWallMs": 41.86333399999785
+      }
+    ]
+  },
+  "rawSDKFailures": [
+    {
+      "id": "ModelRuntime-missing-own-auth-refuses",
+      "pass": false,
+      "kind": "sdk-limitation",
+      "evidence": {
+        "sdk": "1.1.0",
+        "missingOwnAuthRefused": false,
+        "requests": [
+          {
+            "path": "/v1/responses",
+            "model": "gpt-5-mini",
+            "ambientCredentialUsed": true
+          }
+        ],
+        "stopReason": "error",
+        "sentinelAccess": [],
+        "subprocessAttempts": [],
+        "elapsedMs": 336
+      }
+    },
+    {
+      "id": "ModelRuntime-native-abort-quiescence",
+      "pass": false,
+      "kind": "sdk-limitation",
+      "evidence": {
+        "pendingAtReturn": 1,
+        "nativeStopReason": "error",
+        "writesAtReturn": 14
+      }
+    },
+    {
+      "id": "createModels-native-abort-quiescence",
+      "pass": false,
+      "kind": "sdk-limitation",
+      "evidence": {
+        "pendingAtReturn": 1,
+        "nativeStopReason": "error",
+        "writesAtReturn": 16
+      }
+    }
+  ],
+  "checks": [
+    {
+      "id": "sandbox-tcp-192.0.2.1",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "code": "EPERM"
+      }
+    },
+    {
+      "id": "sandbox-tcp-2001:db8::1",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "code": "EPERM"
+      }
+    },
+    {
+      "id": "sandbox-tls-192.0.2.1",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "code": "EPERM"
+      }
+    },
+    {
+      "id": "sandbox-udp-192.0.2.1",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "code": "EPERM"
+      }
+    },
+    {
+      "id": "empty-home-empty-path",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "homeEntryCount": 0,
+        "pathEmpty": true
+      }
+    },
+    {
+      "id": "lower-missing-own-auth-refuses",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "status": "error",
+        "providerRequests": 0
+      }
+    },
+    {
+      "id": "offered-provider-own-credential-guard",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {}
+    },
+    {
+      "id": "anthropic-offered-own-credential-guard",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {}
+    },
+    {
+      "id": "incomplete-own-key-no-ambient-fallback",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {}
+    },
+    {
+      "id": "initial-cloud-factory-rejected",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {}
+    },
+    {
+      "id": "all-builtins-no-ambient-auth",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "unexpectedConfigured": [],
+        "providers": 42
+      }
+    },
+    {
+      "id": "lower-selected-wire-contract",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "answer": {
+          "providerId": "openai",
+          "modelId": "gpt-5-mini",
+          "effort": "low",
+          "text": "Council fixture answer",
+          "events": 6,
+          "status": "stop",
+          "outputBytes": 22,
+          "usage": {
+            "input": 10,
+            "output": 4
+          }
+        },
+        "wire": {
+          "path": "/v1/responses",
+          "model": "gpt-5-mini",
+          "effort": "low",
+          "maxTokens": 16,
+          "ownCredentialUsed": true,
+          "ownOAuthUsed": false,
+          "ambientCredentialUsed": false,
+          "personaPresent": true,
+          "toolDeclarations": 0,
+          "mode": "normal"
+        }
+      }
+    },
+    {
+      "id": "provider-errors-sanitized",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "failed": {
+          "providerId": "openai",
+          "modelId": "gpt-5-mini",
+          "effort": "low",
+          "text": "",
+          "events": 1,
+          "status": "error",
+          "errorCode": "provider-error",
+          "outputBytes": 0,
+          "usage": {
+            "input": 0,
+            "output": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "malformed-stream-terminal-error",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "status": "error"
+      }
+    },
+    {
+      "id": "provider-length-preserved",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "status": "length"
+      }
+    },
+    {
+      "id": "consumer-output-bound-no-later-request",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "status": "output-limit",
+        "outputBytes": 200,
+        "requestsStable": true
+      }
+    },
+    {
+      "id": "inference-abort-no-later-request",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "status": "aborted",
+        "requestsStable": true,
+        "pendingStorage": 0
+      }
+    },
+    {
+      "id": "deadline-cancels-stream",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "status": "aborted"
+      }
+    },
+    {
+      "id": "provider-503-no-hidden-retry",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "status": "error",
+        "providerRequests": 1
+      }
+    },
+    {
+      "id": "provider-429-no-hidden-retry",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "status": "error",
+        "providerRequests": 1
+      }
+    },
+    {
+      "id": "abort-429-no-later-retry",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "providerRequests": 1
+      }
+    },
+    {
+      "id": "abort-503-no-later-retry",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "providerRequests": 1
+      }
+    },
+    {
+      "id": "explicit-supported-retry-option-exercised",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "maxRetries": 1,
+        "providerRequests": 2,
+        "backoffMs": 500
+      }
+    },
+    {
+      "id": "logout-no-ambient-fallback",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {}
+    },
+    {
+      "id": "published-anthropic-api-key-inference",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "status": "stop",
+        "wire": {
+          "path": "/v1/messages?beta=true",
+          "model": "claude-sonnet-4-6",
+          "effort": "low",
+          "thinking": {
+            "type": "adaptive",
+            "display": "summarized"
+          },
+          "maxTokens": 16,
+          "ownCredentialUsed": true,
+          "ownOAuthUsed": false,
+          "ambientCredentialUsed": false,
+          "personaPresent": true,
+          "toolDeclarations": 0,
+          "mode": "normal"
+        }
+      }
+    },
+    {
+      "id": "published-oauth-login-persists",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "credentialType": "oauth",
+        "eventTypes": [
+          "auth_url",
+          "progress"
+        ],
+        "tokenExchanges": 1
+      }
+    },
+    {
+      "id": "published-anthropic-oauth-inference-wire",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "answer": {
+          "providerId": "anthropic",
+          "modelId": "claude-sonnet-4-6",
+          "effort": "low",
+          "text": "Council fixture answer",
+          "events": 5,
+          "status": "stop",
+          "outputBytes": 22,
+          "usage": {
+            "input": 10,
+            "output": 4
+          }
+        },
+        "wire": {
+          "path": "/v1/messages?beta=true",
+          "model": "claude-sonnet-4-6",
+          "effort": "low",
+          "thinking": {
+            "type": "adaptive",
+            "display": "summarized"
+          },
+          "maxTokens": 16,
+          "ownCredentialUsed": false,
+          "ownOAuthUsed": true,
+          "ambientCredentialUsed": false,
+          "personaPresent": true,
+          "toolDeclarations": 0,
+          "mode": "normal"
+        }
+      }
+    },
+    {
+      "id": "parallel-oauth-single-locked-refresh",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "refreshes": 1,
+        "maxActiveMutations": 1
+      }
+    },
+    {
+      "id": "oauth-refresh-failure-no-fallback",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "code": "oauth",
+        "credentialPreserved": true,
+        "rawCauseContainsSyntheticToken": true
+      }
+    },
+    {
+      "id": "logout-versus-refresh-no-resurrection",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "accountAbsent": true
+      }
+    },
+    {
+      "id": "ModelRuntime-native-abort-quiescence",
+      "pass": false,
+      "kind": "sdk-limitation",
+      "evidence": {
+        "pendingAtReturn": 1,
+        "nativeStopReason": "error",
+        "writesAtReturn": 14
+      }
+    },
+    {
+      "id": "ModelRuntime-owned-barrier-no-inference-after",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "writesAfterReturn": 1,
+        "pendingAfterBarrier": 0,
+        "inferenceRequestsAfterAbort": 0
+      }
+    },
+    {
+      "id": "createModels-native-abort-quiescence",
+      "pass": false,
+      "kind": "sdk-limitation",
+      "evidence": {
+        "pendingAtReturn": 1,
+        "nativeStopReason": "error",
+        "writesAtReturn": 16
+      }
+    },
+    {
+      "id": "createModels-owned-barrier-no-inference-after",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "writesAfterReturn": 1,
+        "pendingAfterBarrier": 0,
+        "inferenceRequestsAfterAbort": 0
+      }
+    },
+    {
+      "id": "service-abort-awaits-refresh-write",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "status": "aborted",
+        "pendingStorage": 0,
+        "inferenceRequests": 0
+      }
+    },
+    {
+      "id": "service-abort-during-persist-unlock-awaits",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "status": "aborted",
+        "pending": 0,
+        "writesAfterAbort": 1,
+        "afterWriteAbortMs": 201,
+        "inferenceRequests": 0
+      }
+    },
+    {
+      "id": "queued-auth-abort-no-refresh",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "lockAttempted": true,
+        "refreshes": 0,
+        "writes": 0,
+        "pending": 0
+      }
+    },
+    {
+      "id": "operation-scope-separate-from-shutdown",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "globalPendingWhileOwnScopeSettled": 1
+      }
+    },
+    {
+      "id": "catalog-abort-owned-write-barrier",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "pendingAtSDKReturn": 1,
+        "pendingAfterBarrier": 0,
+        "publishedWrites": 0
+      }
+    },
+    {
+      "id": "no-sentinel-access-no-native-cli",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "sentinelAccess": [],
+        "subprocessAttempts": []
+      }
+    },
+    {
+      "id": "home-remains-empty",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {}
+    },
+    {
+      "id": "static-catalog-no-auto-network-refresh",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "observedPaths": [
+          "/v1/responses",
+          "/v1/messages?beta=true"
+        ]
+      }
+    },
+    {
+      "id": "cross-process-single-oauth-refresh",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "workerExitCodes": [
+          0,
+          0
+        ],
+        "refreshes": 1,
+        "bothReachedExpiredCredential": true,
+        "oauthLockContentions": [
+          21,
+          0
+        ]
+      }
+    },
+    {
+      "id": "cross-process-other-provider-updates-preserved",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "credentialProviders": [
+          "anthropic",
+          "openai",
+          "xai"
+        ],
+        "rotatedCredentialPreserved": true
+      }
+    },
+    {
+      "id": "lower-only-dependencies-full-suite",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "exitCode": 0,
+        "requirementFailures": [],
+        "packages": [
+          "../../../../../../../private/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/ai-only/node_modules/@earendil-works/pi-ai",
+          "../../../../../../../private/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/ai-only/node_modules/@earendil-works/pi-telemetry"
+        ]
+      }
+    },
+    {
+      "id": "prior-files-preserved",
+      "pass": true,
+      "kind": "requirement",
+      "evidence": {
+        "priorChangeCount": 94,
+        "changed": [],
+        "added": []
+      }
+    }
+  ],
+  "remainingRequirementFailures": [],
+  "routeContract": {
+    "providerId": "openai | anthropic (proof allowlist)",
+    "modelId": "exact SDK catalog ID",
+    "effort": "validated SDK model thinking level",
+    "auth": "Council-owned CredentialStore entry required",
+    "noTools": true,
+    "noCatalogNetworkRefresh": true,
+    "noAmbientAuth": true,
+    "cancellation": "abort signal + operation-scoped storage lease barrier; separate shutdown drain"
+  },
+  "artifacts": {
+    "qa": "/Volumes/MyEXT/Projects/Others/PI/bpx-council/scripts/sdk-proof/qa.json",
+    "matrix": "/Volumes/MyEXT/Projects/Others/PI/bpx-council/scripts/sdk-proof/provider-matrix.json",
+    "logs": [
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/install.log",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/ai-only-install.log",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/suite.mjs.log",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/ambient-probe.mjs.log",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/worker-0.log",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/worker-1.log"
+    ],
+    "results": [
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/suite-results.json",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/ambient-probe.json",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/preliminary.json",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/suite-wire.json",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/startup.json",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/package-lock.json",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/ai-only/suite-results.json",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/ai-only/suite.mjs.log",
+      "/var/folders/_d/zbfq7c8j5_91rkcjrdqf9g3r0000gn/T/council-sdk-proof-MKpauu/ai-only/package-lock.json"
+    ]
+  }
+}

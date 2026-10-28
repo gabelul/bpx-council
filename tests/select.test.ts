@@ -109,11 +109,11 @@ describe("models-list parsing", () => {
 		expect(parseCodexModels({})).toEqual([]);
 	});
 
-	it("knows which backends can list models", () => {
+	it("knows which backends offer model choices", () => {
 		expect(backendListsModels("opencode")).toBe(true);
 		expect(backendListsModels("anthropic")).toBe(true);
 		expect(backendListsModels("codex")).toBe(true);
-		expect(backendListsModels("claude")).toBe(false);
+		expect(backendListsModels("claude")).toBe(true);
 	});
 });
 

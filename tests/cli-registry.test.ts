@@ -75,8 +75,9 @@ describe("enumeration coverage", () => {
 		expect(canList("opencode")).toBe(true);
 		expect(canList("crush")).toBe(true);
 		expect(canList("cursor-agent")).toBe(true);
-		// no `models` command → free text
+		// Claude offers static aliases instead of a model-list subprocess.
 		expect(canList("claude")).toBe(false);
+		expect(cliSpec("claude")?.modelPresets).toEqual(["sonnet", "opus", "haiku"]);
 		expect(canList("gemini")).toBe(false);
 		expect(canList("qwen")).toBe(false);
 		expect(canList("amp")).toBe(false);

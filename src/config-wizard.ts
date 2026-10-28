@@ -15,7 +15,9 @@ import { MODES, type Mode } from "./args.js";
 import { type BackendConfig, type BpxCouncilConfig, type DebateConfig, configPath, projectConfigWritePath } from "./config.js";
 import { availableBackends, parseBackendArg, type AvailableBackend } from "./detect.js";
 import { validateConfig } from "./config-validation.js";
-import { editConfig, type EditorPickers } from "./config-editor.js";
+import { backendName as storedBackendName, type EditorPickers } from "./config-editor.js";
+import { getSdkProviderService } from "./sdk-provider-service.js";
+import { parseSdkRoute, serializeSdkRoute } from "./sdk-route.js";
 import { projectTargetIsGlobal } from "./config-target.js";
 import { listEfforts, listModels } from "./models-list.js";
 import { printStarNudge } from "./nudge.js";
@@ -77,8 +79,9 @@ export interface Answers {
  */
 export function backendConfigFromSpec(spec: string): BackendConfig {
 	const parsed = parseBackendArg(spec);
-	if (parsed.type === "http") {
-		const backend: BackendConfig = { type: "http", provider: parsed.provider as BackendConfig["provider"] };
+	if (parsed.type === "http" || parsed.type === "sdk") {
+		const backend: BackendConfig = parsed.type === "sdk" ? { type: "sdk", provider: parsed.provider! }
+			: { type: "http", provider: parsed.provider as "anthropic" | "openai" | "google" };
 		if (parsed.model) backend.model = parsed.model;
 		if (parsed.effort) backend.effort = parsed.effort;
 		return backend;
@@ -101,10 +104,10 @@ export function backendConfigFromSpec(spec: string): BackendConfig {
 export function buildConfig(answers: Answers, existing?: BpxCouncilConfig): BpxCouncilConfig {
 	const selected = backendConfigFromSpec(answers.soloSpec);
 	const previous = existing?.solo?.backend;
-	const sameBackend = previous?.type === selected.type && (selected.type === "http"
+	const sameBackend = previous?.type === selected.type && (selected.type === "http" || selected.type === "sdk"
 		? previous.provider === selected.provider : previous?.command === selected.command);
 	const solo: BpxCouncilConfig["solo"] = {
-		backend: sameBackend ? { ...previous, ...selected } : selected,
+		backend: sameBackend ? { ...previous, ...selected } as BackendConfig : selected,
 	};
 	// Carry a legacy `model` forward if one is already in the file, but never
 	// write a new one: it was decoration, and the model belongs on the backend.
@@ -180,8 +183,8 @@ function readExisting(path: string, project = false): { ok: true; config?: BpxCo
 /** The current advisor backend name, for the default in the picker. */
 function currentBackendName(existing: BpxCouncilConfig | undefined, available: AvailableBackend[]): string {
 	const b = existing?.solo?.backend;
-	const name = b?.type === "http" ? b.provider : b?.command;
-	if (name && available.some((a) => a.name === name)) return name;
+	const name = b ? storedBackendName(b) : undefined;
+	if (name && (b?.type === "sdk" || available.some((a) => a.name === name))) return name;
 	return available.find((a) => a.name === "anthropic")?.name
 		?? available.find((a) => a.name === "claude")?.name
 		?? available[0]?.name ?? "codex";
@@ -193,7 +196,7 @@ function printPlan(path: string, config: BpxCouncilConfig, rail = false): void {
 	const model = b?.model ? `  ${themeValue(b.model)}` : dim("  (its own default)");
 	const kind = b?.type === "http" || b?.type === "cli" ? ` ${kindBadge(b.type)}` : "";
 	const effort = b?.effort ? `  ${dim("effort")} ${themeValue(b.effort)}` : "";
-	const label = `${b?.type === "http" ? b.provider : (b?.command ?? "auto-detect")}${kind}${model}${effort}`;
+	const label = `${b ? storedBackendName(b) : "auto-detect"}${kind}${model}${effort}`;
 
 	const rows = [
 		`${themeLabel("mode")}     ${modeTone(mode)(mode)}  ${dim(MODE_HINTS[mode] ?? "")}`,
@@ -474,14 +477,8 @@ async function finalize(
  */
 export async function runConfig(opts: ConfigOptions): Promise<number> {
 	const available = availableBackends();
-	const isTty = process.stdin.isTTY === true;
+	const isTty = process.stdin.isTTY === true && process.stderr.isTTY === true;
 	const interactive = isTty && !opts.yes && !opts.backend && !opts.mode;
-	if (available.length === 0 && !interactive) {
-		console.error(red("No advisor backend found on this machine."));
-		console.error(dim("Install codex, claude or crush (the three verified working), or set ANTHROPIC_API_KEY, then re-run."));
-		return 1;
-	}
-
 	if (!isTty && !opts.yes && !opts.dryRun) {
 		console.error("bpx-council config: not a terminal. Re-run with --yes (plus --backend/--mode/--scope) or --dry-run.");
 		return 1;
@@ -489,14 +486,13 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 
 	// Interactive settings never change the file until Review → Save.
 	if (interactive) {
-		railIntro(bold(cyan("bpx-council")), "configure your advisor");
-
 		// Scope first — it decides which file we read and write. Skip the question
 		// when it's already pinned (--scope or an explicit --config).
 		let scope = opts.scope;
 		const asksScope = !scope && !opts.configPath;
 		const scopeChrome = makeRailChrome(1);
 		if (asksScope) {
+			railIntro(bold(cyan("bpx-council")), "configure your advisor");
 			const picked = await editorPickers.select(
 				scopeChrome.ask(1, "Save where?"),
 				[
@@ -521,14 +517,22 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 
 		const read = readExisting(path, project);
 		if (!read.ok) return refuseUnparseable(path);
-		const config = await editConfig(editorPickers, available, read.config, {
-			path, scope: opts.configPath ? "explicit" : scope ?? "global", project,
-		});
-		if (config === null) {
-			railOutro([dim("Discarded. Nothing written.")]);
+		try {
+			const { runConfigWorkbench } = await import("./config-workbench.js");
+			const result = await runConfigWorkbench(available, read.config, {
+				path, scope: opts.configPath ? "explicit" : scope ?? "global", project,
+			}, { listModels, listEfforts }, getSdkProviderService());
+			if (result.code !== 0) return result.code;
+			if (result.config === null) { console.error(dim("Discarded. Nothing written.")); return 0; }
+			validateConfig(result.config, path, project);
+			if (opts.dryRun) { console.error(dim("Dry run — nothing written.")); return 0; }
+			writeConfigFile(path, result.config);
+			console.error(`Saved ${prettyPath(path)}`);
 			return 0;
+		} catch (error) {
+			console.error(red(`Config workbench: ${error instanceof Error ? error.message : String(error)}`));
+			return 1;
 		}
-		return finalize(path, config, opts.dryRun ?? false, undefined, true, project);
 	}
 
 	// Headless: flags + existing at the chosen scope, no confirm.
@@ -540,6 +544,11 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 	const read = readExisting(path, opts.scope === "project" && !opts.configPath);
 	if (!read.ok) return refuseUnparseable(path);
 	const existing = read.config;
+	if (available.length === 0 && !opts.backend?.startsWith("sdk:") && existing?.solo?.backend?.type !== "sdk") {
+		console.error(red("No advisor backend found on this machine."));
+		console.error(dim("Install codex, claude or crush (the three verified working), or set ANTHROPIC_API_KEY, then re-run."));
+		return 1;
+	}
 
 	const project = opts.scope === "project" && !opts.configPath;
 	const choices = project ? available.filter((b) => b.name === "anthropic") : available;
@@ -557,10 +566,17 @@ export async function runConfig(opts: ConfigOptions): Promise<number> {
 		return 1;
 	}
 	const backendName = opts.backend ?? currentBackendName(existing, choices);
+	let soloSpec = `${backendName}${opts.model ? `:${opts.model}` : ""}${opts.effort ? `@${opts.effort}` : ""}`;
+	if (backendName.startsWith("sdk:")) {
+		const route = parseSdkRoute(backendName);
+		if (opts.model) route.model = opts.model;
+		if (opts.effort) route.effort = opts.effort;
+		soloSpec = serializeSdkRoute(route);
+	}
 	const config = buildConfig(
 		{
 			mode: opts.mode ?? existing?.defaultMode ?? "solo",
-			soloSpec: `${backendName}${opts.model ? `:${opts.model}` : ""}${opts.effort ? `@${opts.effort}` : ""}`,
+			soloSpec,
 			council: existing?.council?.backends, // headless keeps any existing council
 		},
 		existing,

@@ -55,6 +55,10 @@ third member dying mid-run, and the council shipping without it.)
 
 ## Install
 
+Requires Node 22.19 or newer. Direct providers use Council's bundled SDK;
+Pi does not need to be installed. Advisor CLIs remain separate installs with
+their own runtime requirements.
+
 Signed into Codex or Claude CLI? Both can run without an API key. Codex runs
 in a read-only sandbox but can still read project files; Claude's preset disables
 tools. Anthropic HTTP works with `ANTHROPIC_API_KEY`. Other agent CLIs aren't
@@ -64,8 +68,11 @@ auto-selected: choose one explicitly only if you trust its local configuration.
 npx @booplex/bpx-council "Is this auth flow sane?"
 ```
 
-No CLI on your PATH? `ANTHROPIC_API_KEY` enables Anthropic HTTP. OpenAI HTTP
-isn't implemented yet; `OPENAI_API_KEY` alone won't select it. Once you like it:
+No CLI on your PATH? Run `bpx-council config`, open Backends → Direct providers,
+then configure an account and explicitly select an Advisor provider and model.
+Direct SDK routes don't use `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or Pi's login
+files. The older Anthropic HTTP route still uses `ANTHROPIC_API_KEY`; auto-detection
+doesn't switch existing routes to SDK providers. Once you like it:
 
 ```bash
 npm install -g @booplex/bpx-council
@@ -75,6 +82,53 @@ bpx-council install     # teach your coding agent it exists (see below)
 The `install` step is deliberately separate, because nothing should write into
 your editor config on an `npm install`. If you skip it, the first time you run `bpx-council`
 in a real terminal it'll offer to set that up for you, once.
+
+## Direct providers
+
+Backends → Direct providers separates Council accounts from installed CLIs.
+Initial supported choices:
+
+| Provider | Council authentication |
+| --- | --- |
+| OpenAI | API key |
+| Anthropic | API key or SDK-supported OAuth login |
+
+OpenAI subscription login and other SDK providers aren't admitted yet. Finding
+Codex or Claude on PATH does not import their credentials. OAuth uses the bundled
+SDK's login flow: open its displayed URL yourself and answer any masked prompts.
+Council doesn't launch a browser. Supported login flow does not establish your
+account's model entitlement or billing plan.
+
+Accounts live in `~/.bpx-council/auth.json`, separate from route configuration.
+Credentials are plaintext in an owner-only file, inside an owner-only directory;
+this is not an OS keychain. Login, key replacement and local account removal are
+explicit, immediate changes. **Discarding a route draft does not undo them.**
+Local removal doesn't revoke the account at its provider. Project settings cannot
+manage accounts or author SDK routes; they can inherit a trusted global route.
+
+After setup, explicitly choose a Direct provider in Advisor → Backend and pick a
+bundled model. Nothing gets assigned because you signed in. Model lists are
+bundled metadata, not live account catalogs. Routes use `sdk:provider:model@effort`,
+independent from CLI and legacy HTTP names:
+
+```bash
+bpx-council --backend sdk:openai:gpt-5-mini@low \
+  --question "Is this auth flow sane?" --no-stdin
+```
+
+SDK requests have no agent tools or workspace discovery. They require an explicit
+supported model, reject unsupported effort instead of downgrading it, and do not
+retry failed provider calls. SDK images are not supported; existing Codex and
+Anthropic HTTP image routes remain available. Ctrl-C stops future seats, cancels
+supported active calls and waits for credential refresh/storage cleanup before
+exit 130. Completed Council or Debate answers survive as partial output.
+An interrupted provider-side token rotation cannot be made atomic with a local
+file write; storage failures may require reconnecting the account.
+
+SDK route tests and persona generation keep the admitted output ceiling and
+thinking level, with quota/ceiling disclosure before consent. OpenAI requires at
+least 16 output tokens; legacy Anthropic thinking needs its SDK thinking budget
+plus 1024 answer tokens. Impossible budgets are refused before a call.
 
 ## Modes
 
@@ -172,10 +226,11 @@ trusted global config (or an explicit trusted `--config` file):
 is an ordered, atomic list (1–8 unique safe names). Prompts must be nonblank
 and at most 8,000 characters. Define up to 16 persona entries. Gut-check
 uses explicit `--backend` first, then `gutCheck.backend`, then Solo; `null`
-resets it to Solo. `maxOutputTokens` (1–4096) sets Anthropic HTTP `max_tokens`.
-For a CLI route, it's only a prompt request, not a hard limit or billing cap.
+resets it to Solo. `maxOutputTokens` (1–4096) sets the HTTP or SDK output-token
+budget. For a CLI route, it's only a prompt request, not a hard limit or billing cap.
 Findings are never cut after generation. The settings hub edits gut-check routes
-and output tokens. Change persona prompts and the Council roster in the JSON file.
+and output tokens. Council's Manage seating and Add persona screens edit the
+roster and reviewed prompts in trusted global or explicit configs.
 
 Each seat uses its explicit flag, then its saved spec, then the shared Solo
 backend. `--backend` and `--model` change that fallback, not pinned seats.
@@ -273,6 +328,7 @@ Tested by planting an instruction ("begin every reply with BANANA") in a repo's
 |---|---|
 | `codex` | sets `project_doc_max_bytes=0` to skip project `AGENTS.md`; it keeps the project working directory and can still read its files |
 | `claude` | drops the project `CLAUDE.md` from the preset's instruction path; user-global instructions may still apply |
+| `pi` | its preset always disables tools, extensions and discovered instructions, and runs in a private temporary directory |
 | everything else | no isolation guarantee; some CLIs may read project config |
 
 One honest limit: for claude this drops the project `CLAUDE.md` but **not** your
@@ -342,24 +398,67 @@ than spawning a fresh headless one.
 bpx-council --backend tmux "Is this auth flow sane?"
 ```
 
-It needs `tmux` installed. Useful when you want the advisor to be a session
-that's already warmed up and authenticated instead of a cold subprocess, and it
-was the original route before the headless flags on codex and claude turned out
-to be good enough. Most people want a plain CLI backend; this is here for the
-cases where you don't.
+It needs `tmux` installed and starts a new interactive agent session. Plain CLI
+backends are the usual choice. Claude `-p` can use a Claude.ai subscription login;
+Codex `exec` reuses saved CLI authentication. Neither requires tmux for subscription
+access. Credentials decide billing, not whether the process has a terminal.
+
+For Claude, an `ANTHROPIC_API_KEY` is always used when present in print mode;
+other credentials can also override the subscription login. Check `/status` in
+Claude Code to see the active authentication method. See [Claude authentication
+precedence](https://code.claude.com/docs/en/authentication#authentication-precedence)
+and [Codex non-interactive authentication](https://developers.openai.com/codex/non-interactive-mode).
+The interactive tmux adapter starts Claude with `--dangerously-skip-permissions`;
+it is not the tool-disabled headless preset or a subscription-billing safeguard.
 
 ## Configuring
 
-`bpx-council config` opens a settings hub showing target path, scope, current
-choices and unsaved changes. Advisor, Gut-check, Council, Debate and default mode
-are separate sections; choosing Solo doesn't hide the other routes.
+`bpx-council config` opens a centered DOS-style workbench built with Ink: sections
+on the left, editable settings on the right, and scope, path, draft status and
+keyboard hints kept visible. A bounded navy window sits on a charcoal surround;
+sparse screens shrink instead of stretching across a large terminal. Field
+editors, pickers, confirmations and running checks share the same window style. Advisor, Gut-check, Council, Debate and Preferences stay
+independent; choosing Solo doesn't hide the other routes.
 
-Edits stay in a draft until **Review & save → Save**. Back from review keeps the
-draft. Escape from a picker leaves its current value alone; Escape from the hub
-exits, asking before discarding unsaved changes. Discard and Ctrl-C write nothing.
-Opening settings doesn't rewrite or normalize your file.
+Keys 1–8 jump straight into sections; Tab switches panes. Up/Down move through
+sections and fields. Right enters details from the sidebar, then opens the
+selected editable field; Enter also opens or edits. Council and Debate show
+seat overviews first. Right/Enter opens one seat's Backend, Model, Effort and
+Test action; Council seats also have Persona details. Left/Escape returns one
+level and restores focus, then returns to the sidebar. Actions such as Test,
+Generate, Accept, seating and Save require Enter, never an arrow press.
+Escape closes a field picker first. Escape from the sidebar asks before
+exiting; it doesn't switch sections or discard anything. Focus is remembered
+when you return. Narrow terminals show one pane at a time instead of squeezing
+two panes into unreadable columns. Left/Right move the caret in both picker
+search and manual entry, never switch panes. Manual fields also support Home/End,
+Ctrl-A/E, Backspace, forward Delete and multi-character paste; long values scroll
+with the caret.
 
-Model catalogs load only when you ask for them, with search for long lists.
+Edits stay in a draft until you confirm Save. **Review → Save** opens a centered
+DOS-style dialog with **Cancel** selected, then **Save**. Back from review keeps
+the draft. The exit dialog starts on **Keep editing**: dirty drafts offer
+**Save & exit** and **Discard & exit**; clean drafts offer **Exit**. Discard's
+explicit exit action opens that same dialog rather than finishing immediately.
+
+While a confirmation dialog is open, arrows select buttons without executing
+them, Tab/Shift-Tab cycle them, and Home/End select the first/last button.
+Section shortcuts stay blocked. Enter
+confirms the selected button; Escape closes the dialog and restores the exact
+section, pane, row and draft. Save validates both before opening its dialog and
+when confirmed; invalid drafts stay editable with an error. Discard/Exit and
+Ctrl-C write nothing. Ctrl-C cancels any in-flight call and exits 130 after
+subprocess/request cleanup; inside a dialog with no call it exits immediately.
+Opening settings doesn't rewrite or normalize your file. Headless flags still
+bypass the workbench.
+
+Claude's model picker offers Sonnet, Opus and Haiku directly; no model ID needs
+typing. These are Claude's supported aliases, resolved by the CLI when it runs,
+not an account-specific catalog. Backend default keeps Claude's own model choice.
+Saved exact model IDs remain selectable; manual entry is optional.
+
+Other model catalogs load only when you ask for them, with search for long lists.
+Lookups run asynchronously; Escape cancels without replacing your saved choice.
 Saved unavailable choices stay selectable, and manual model IDs are always an
 option. **Backend default** clears the pinned model and its effort; changing a
 model clears stale effort too. Explicit Advisor route/model/effort changes also
@@ -374,10 +473,100 @@ bpx-council config --backend codex --model gpt-5.6-sol --mode solo --yes   # hea
 ```
 
 The hub preserves untouched fields and refuses rather than clobber an invalid
-file. Council shows your configured roster, including custom names, plus its
-synthesizer; Debate exposes advocate, critic and synthesizer independently.
-Headless `config --yes` leaves saved seats, roster, persona prompts, gut-check
-settings, and backend-specific options alone. There's also a one-command
+file. Headless `config --yes` leaves saved seats, roster, persona prompts,
+gut-check settings and backend-specific options alone.
+
+### Checking installed backends
+
+Backends (shortcut 5) lists every supported CLI, including Missing and Unusable
+entries, plus stock Anthropic API key presence. Installed means an executable was
+found on PATH, not that login or a chosen model has been tested. The backend
+picker now shows these installation facts instead of a blanket login warning.
+Enter backend manually… is an advanced command/route shortcut, not an API key
+field and not an installer.
+
+Choose Check installed CLIs to run bounded, cancellable version commands. These
+checks never send a model prompt. A centered blocking dialog shows the current CLI,
+completed steps, a segmented progress bar and aligned backend/status rows. Model
+calls use a spinner, not a pretend completion percentage. Navigation and editing stay locked until
+completion or cancellation cleanup; Escape cancels, Ctrl-C cancels then exits.
+Hard local-check failures are excluded from ordinary new assignments, while saved
+routes remain available to keep unchanged. An unfamiliar version string is a
+warning, not proof of a broken backend, and remains selectable. Version errors,
+missing commands and unsupported advisor presets stay distinct. Open a backend for its path/version; Test Advisor
+connection tests only a matching configured Advisor, after quota confirmation.
+Connection receipts show the requested route and latency and expire when that
+route changes. They do not mark every model on a backend as working.
+
+Interactive `bpx-council install` offers the same local version checks, defaulting
+to No, before agent integration. Headless install, config startup and npm
+postinstall do not launch these commands or make model calls. CLI startup may
+still update its own legacy settings; private working directories protect project
+files, not third-party global startup. Windows gets presence inventory but version
+checks remain unsupported until descendant cancellation can be guaranteed.
+
+Preferences is now shortcut 6, Review 7 and Discard 8. Checks and their results
+stay in the session; only Review → Save writes configuration.
+
+### Personas and seating
+
+Council → Manage seating opens the persona library. Seat/unseat keeps definitions
+and route assignments; Council needs 1–8 seated members. Global and explicit
+trusted configs can edit a persona's prompt and stance. Editing a bundled persona
+creates an explicit override; Reset builtin prompt removes only that override.
+Existing names stay fixed, and new names cannot overwrite another persona.
+
+Council → Add persona offers manual and AI-assisted creation. Manual candidates
+have a name, stance and multiline system prompt. Enter inserts a newline in the
+prompt editor; Ctrl-S applies the field, not the config file. Preview and Accept
+put the reviewed definition into the draft. New personas inherit Advisor and are
+seated if there's room; otherwise they remain in the library. Definitions allow
+up to 8000 prompt characters and 16 custom entries. Project configs can seat
+bundled personas but cannot author prompts.
+
+AI-assisted creation asks for a focus and a configured generator route. Generate
+opens a quota/cost dialog with Cancel selected. A successful call produces an
+editable candidate, not a saved persona. Inspect it, edit or regenerate, then
+Accept into draft. Name collisions remain errors until corrected. The generator
+route does not become the new persona's route. Final Review → Save still decides
+what reaches disk.
+
+### Testing selected routes
+
+Test this route uses the unsaved route, including inherited model and legacy
+Advisor effort. Test all members runs eligible Council seats sequentially after
+one confirmation showing the call count. Blocked seats show reasons; completed
+results survive cancellation and later seats are marked not called. Escape
+cancels the request/process and waits for cleanup. Tests never save config.
+
+Results show attempted route, response status and latency. A response is not
+independent proof of model identity, persona quality or general entitlement.
+Results stay in this session only and are invalidated when their effective route
+changes. Smoke tests send a synthetic request, not workspace files or persona
+prompts; AI generation sends the focus you entered.
+
+Workbench tests/generation support guarded Pi, tool-disabled Claude and stock
+Anthropic HTTP. Basic connection tests also support Codex: a tiny synthetic prompt,
+selected model/effort, private working directory, project-instruction suppression,
+read-only sandbox, quota confirmation and cancellable cleanup. Codex may still use
+tools; the confirmation states this, and private cwd is not a filesystem boundary.
+Codex AI persona generation remains blocked under the stricter tool-disabled rule.
+OpenCode, tmux, custom CLI arguments, custom HTTP destinations/key variables and
+unsupported transports remain blocked here rather than silently changing routes.
+A failed exact model route is not offered again as an ordinary unchanged assignment;
+changing its model/effort or testing successfully clears that specific failure.
+Saved routes are never silently deleted, and one failure does not blacklist all
+models on a backend. CLI actions also need Unix process-group cancellation; Windows can use
+Anthropic HTTP. Normal advisor routes are unchanged. A conflicting
+`BPX_COUNCIL_MODEL`/`ANTHROPIC_MODEL` override must be cleared before testing a
+shared draft selection; independent seat pins are not replaced by it.
+
+Project drafts edit one file, not the merged global layer. If a seat inherits
+Advisor and that project file has no Advisor backend, testing is blocked rather
+than guessing the global route. Test from Global settings or pin a project
+Anthropic backend. Independently pinned project HTTP seats remain testable.
+
+There's also a one-command
 onboarding that does both this and the agent wiring:
 
 ```bash
@@ -513,6 +702,35 @@ CLI route runs with tools denied and accepts only its JSON event output. Other
 CLI commands require a trusted global or explicit config. A custom command's
 permissions and output format are yours to check, not something the name
 `bpx-council` magically fixes.
+
+### Pi as the advisor
+
+Pi is an explicit CLI route, separate from the terminal UI library:
+
+```bash
+bpx-council --backend pi "Is this auth flow sane?"
+```
+
+Choose Pi in the workbench to browse the models available through its own global
+configuration and credentials. IDs include the provider (`provider/model`), so
+models with the same name under different providers stay distinct. Manual IDs
+and saved unavailable choices remain selectable.
+
+The preset disables tools, extensions, skills, prompt templates and discovered
+context. It replaces the system and append prompts, disables session persistence,
+uses Pi's offline startup mode, and runs in a private temporary working directory.
+Requested model calls still use the provider API. That protects the project from Pi's startup migrations; Pi may still
+migrate its own legacy global files or use configured credential helpers.
+The Pi CLI route leaves credentials with Pi; it doesn't import them into
+Council-owned SDK accounts.
+
+The catalog is auth-filtered and extension-disabled, not a copy of the running
+Pi session's registry. Extension-only providers and virtual models are excluded.
+A listed model isn't proof of provider entitlement. Thinking choices are Pi's
+CLI-supported levels; Pi may clamp them for the selected model. `ultra` and
+custom Pi argument overrides are refused rather than bypassing the preset.
+Older Pi CLIs that don't support these safety switches fail; Council never
+retries with fewer protections. Image attachment through Pi isn't supported.
 
 Only Anthropic HTTP is implemented. OpenAI and Google HTTP config values fail
 before any request; use a supported CLI or Anthropic route instead. The

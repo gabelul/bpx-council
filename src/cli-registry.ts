@@ -14,6 +14,8 @@
  * long-standing opencode caveat.
  */
 
+import { piArgs, parsePiModels, PI_THINKING_LEVELS } from "./pi-backend.js";
+
 /** Everything bpx-council needs to know to drive one advisor CLI. */
 /** What a single invocation needs to know. */
 export interface RunArgOpts {
@@ -25,6 +27,8 @@ export interface RunArgOpts {
 	isolate?: boolean;
 	/** The advisor persona, for backends that take it as a real system prompt. */
 	systemPrompt?: string;
+	/** Private literal-persona file for Pi's text-or-path option. */
+	systemPromptFile?: string;
 }
 
 export interface CliBackendSpec {
@@ -51,8 +55,10 @@ export interface CliBackendSpec {
 	jsonl?: boolean;
 	/** Whether pinning a model does anything — amp picks its own, so a pin is a no-op. */
 	ignoresModel?: boolean;
-	/** How to enumerate models, when the CLI can. Omit → the wizard asks for free text. */
+	/** Live model catalog command, when the CLI provides one. */
 	list?: { args: string[]; parse(stdout: string): string[] };
+	/** Selectable aliases without discovery; the CLI resolves them when run. */
+	modelPresets?: readonly string[];
 	/**
 	 * How this CLI takes a reasoning-effort level, and which levels it accepts.
 	 *
@@ -201,6 +207,7 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 		label: "Claude CLI",
 		prompt: "stdin",
 		// claude [--model M] [--effort L] -p   (prompt on stdin). No model-list command.
+		modelPresets: ["sonnet", "opus", "haiku"],
 		isolation: "system-prompt",
 		runArgs: ({ model: m, effort: e, isolate, systemPrompt }) => [
 			...(m ? ["--model", m] : []),
@@ -211,6 +218,17 @@ export const CLI_BACKENDS: Record<string, CliBackendSpec> = {
 			"-p",
 		],
 		effort: { levels: ["low", "medium", "high", "xhigh", "max"] },
+	},
+
+	// Pi 1.0.0 round-trip verified against loopback OpenAI SSE; remote providers unverified.
+	pi: {
+		command: "pi",
+		label: "Pi coding agent",
+		prompt: "stdin",
+		isolation: "system-prompt",
+		runArgs: piArgs,
+		list: { args: [...piArgs(), "--list-models"], parse: parsePiModels },
+		effort: { levels: PI_THINKING_LEVELS },
 	},
 
 	// --- Wired per --help, round-trip UNVERIFIED (confirm before advertising) ---
