@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/gabelul/bpx-council/compare/v2.1.0...v2.2.0) (2026-10-28)
+
+
+### Features
+
+* add pi-ai SDK advisor routes with council-owned credentials ([2cc9f81](https://github.com/gabelul/bpx-council/commit/2cc9f81e57159da100d9947caeffe254768424a4))
+
 ## [2.1.0](https://github.com/gabelul/bpx-council/compare/v2.0.0...v2.1.0) (2026-10-03)
 
 ### Configuration, minus the guided tour
