@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.4](https://github.com/gabelul/bpx-council/compare/v2.2.3...v2.2.4) (2026-10-28)
+
+
+### Bug Fixes
+
+* gate SIGINT fixture on signal-handler registration ([2c3516e](https://github.com/gabelul/bpx-council/commit/2c3516ead980aeb811a7bdfa8046499ac3b8c46c))
+
 ## [2.2.3](https://github.com/gabelul/bpx-council/compare/v2.2.2...v2.2.3) (2026-10-28)
 
 
