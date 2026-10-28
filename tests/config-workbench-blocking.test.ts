@@ -94,7 +94,9 @@ describe("blocking backend-check overlay", () => {
 		const app = render(React.createElement(WorkbenchView, { controller: c, size: { columns: 40, rows: 12 } }), { stdout, stdin, stderr: stdout, exitOnCtrlC: false, patchConsole: false });
 		try {
 			await vi.advanceTimersByTimeAsync(50); const initial = output;
-			await vi.advanceTimersByTimeAsync(350); expect(output.length).toBeGreaterThan(initial.length); expect(output).toContain("Checked 0/4 steps"); expect(listener).not.toHaveBeenCalled(); expect(c.draft).toEqual(saved);
+			// Slow CI runners need several fake-time windows before ink paints the first frame.
+			for (let index = 0; index < 20 && output.length <= initial.length; index += 1) await vi.advanceTimersByTimeAsync(100);
+			expect(output.length).toBeGreaterThan(initial.length); expect(output).toContain("Checked 0/4 steps"); expect(listener).not.toHaveBeenCalled(); expect(c.draft).toEqual(saved);
 		} finally { app.unmount(); unsubscribe(); done(rows); await flush(); }
 	});
 });

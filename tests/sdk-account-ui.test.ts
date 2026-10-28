@@ -13,6 +13,11 @@ import type { ConfigActions } from "../src/config-actions.js";
 
 /** Advance only mocked async work. @returns Microtask completion. */
 async function flush(): Promise<void> { for (let index = 0; index < 20; index++) await Promise.resolve(); }
+/** Poll rendered output until a condition holds; CI runners paint frames late. @param check Predicate over accumulated output. @param timeoutMs Poll deadline. */
+async function untilRendered(check: () => boolean, timeoutMs = 2_000): Promise<void> {
+	const end = Date.now() + timeoutMs;
+	while (!check()) { if (Date.now() > end) throw new Error("render deadline passed"); await new Promise(resolve => setTimeout(resolve, 10)); }
+}
 /** Inert service: no HOME, provider, subprocess or network reads. @returns Controller and injectable fakes. */
 function fixture(project = false) {
 	const providers: SdkProviderSummary[] = [
@@ -216,10 +221,11 @@ describe("private terminal input", () => {
 		stdout.on("data", chunk => { output += chunk.toString(); }); const submit = vi.fn();
 		const app = render(React.createElement(WorkbenchSecretInput, { width: 12, onSubmit: submit }), { stdout, stdin, stderr: stdout, exitOnCtrlC: false, patchConsole: false });
 		try {
-			await new Promise(resolve => setTimeout(resolve, 40)); stdin.write("p"); await new Promise(resolve => setTimeout(resolve, 30)); expect(stripAnsi(output)).toContain("*"); expect(stripAnsi(output)).not.toContain("p"); stdin.write("rivate-paste"); await new Promise(resolve => setTimeout(resolve, 40));
+			await new Promise(resolve => setTimeout(resolve, 40)); stdin.write("p"); await untilRendered(() => stripAnsi(output).includes("*")); expect(stripAnsi(output)).not.toContain("p");
+			stdin.write("rivate-paste"); await new Promise(resolve => setTimeout(resolve, 40));
 			expect(stripAnsi(output)).toContain("*"); expect(output).not.toContain("private");
 			stdin.write("\u001b[D"); await new Promise(resolve => setTimeout(resolve, 20)); stdin.write("\u001b[3~"); await new Promise(resolve => setTimeout(resolve, 20));
-			app.rerender(React.createElement(WorkbenchSecretInput, { width: 3, onSubmit: submit })); await new Promise(resolve => setTimeout(resolve, 30)); stdin.write("\r"); await new Promise(resolve => setTimeout(resolve, 30));
+			app.rerender(React.createElement(WorkbenchSecretInput, { width: 3, onSubmit: submit })); await new Promise(resolve => setTimeout(resolve, 30)); stdin.write("\r"); await untilRendered(() => submit.mock.calls.length > 0);
 			expect(submit).toHaveBeenCalledWith("private-past"); expect(output).not.toContain("private");
 		} finally { app.unmount(); }
 	});
