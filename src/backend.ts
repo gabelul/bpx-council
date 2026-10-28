@@ -147,6 +147,14 @@ export function advisorTransportError(backend: BackendConfig): string | undefine
 	return undefined;
 }
 
+/** Cleanup grace before force-killing a CLI process group, overridable for loaded machines.
+ * @returns Milliseconds between SIGTERM and SIGKILL. */
+function forceKillGraceMs(): number {
+	const parsed = Number.parseInt(process.env.BPX_COUNCIL_FORCE_KILL_MS ?? "", 10);
+	if (!Number.isFinite(parsed)) return 1_000;
+	return Math.min(Math.max(parsed, 250), 10_000);
+}
+
 /** Check for executable descendants after group KILL, ignoring Linux zombies awaiting init.
  * @param pid Process group leader. @returns True while group still has live processes, or inspection is unavailable.
  */
@@ -263,7 +271,7 @@ export function callCliAdvisor(
 					child.stdout?.destroy();
 					child.stderr?.destroy();
 					resolve({ ok: false, text: "", error: cleanupDone ? failed : `${failed}; subprocess cleanup could not be confirmed` });
-				}, 1000);
+				}, 1_000);
 				const checkCleanup = () => {
 					if (process.platform !== "win32" && child.pid && processGroupActive(child.pid)) {
 						poll = setTimeout(checkCleanup, 20);
@@ -273,7 +281,7 @@ export function callCliAdvisor(
 					finishFailure();
 				};
 				checkCleanup();
-			}, 1000);
+			}, forceKillGraceMs());
 		};
 		const timer = setTimeout(() => stop(`"${command}" timed out after ${timeoutMs}ms`), timeoutMs);
 		cleanupTimers = () => {

@@ -21,7 +21,7 @@ describe("native inference SIGINT", () => {
 		const file = join(root, "config.json");
 		await writeFile(file, JSON.stringify({ defaultMode: "council", solo: { backend: route }, council: { members: ["architect", "critic", "simplifier"], backends: { architect: fast, critic: "sdk:anthropic:claude-sonnet-4-6@low", simplifier: slow } } }));
 		const child = spawn(process.execPath, ["--import", "tsx", "--import", resolve("tests/fixtures/sdk-signal/register.mjs"), resolve("src/index.ts"), "--mode", "council", "--config", file, "--format", "json", "Synthetic question"], {
-			cwd: process.cwd(), env: { ...process.env, SDK_SIGNAL_DIRECTORY: root, BPX_COUNCIL_MODEL: "", ANTHROPIC_MODEL: "", BPX_COUNCIL_NO_UPDATE_CHECK: "1" }, stdio: ["pipe", "pipe", "pipe"],
+			cwd: process.cwd(), env: { ...process.env, SDK_SIGNAL_DIRECTORY: root, BPX_COUNCIL_MODEL: "", ANTHROPIC_MODEL: "", BPX_COUNCIL_NO_UPDATE_CHECK: "1", BPX_COUNCIL_FORCE_KILL_MS: "5000" }, stdio: ["pipe", "pipe", "pipe"],
 		});
 		child.stdin.end();
 		let stderr = ""; let stdout = ""; let closed = false; let slowReader = false;
