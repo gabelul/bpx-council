@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.3](https://github.com/gabelul/bpx-council/compare/v2.2.2...v2.2.3) (2026-10-28)
+
+
+### Bug Fixes
+
+* make CLI force-kill grace configurable for loaded CI runners ([9d2c878](https://github.com/gabelul/bpx-council/commit/9d2c878c35711de5ab9dd0bde14a82ccddd7519c))
+
 ## [2.2.2](https://github.com/gabelul/bpx-council/compare/v2.2.1...v2.2.2) (2026-10-28)
 
 
