@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.2](https://github.com/gabelul/bpx-council/compare/v2.2.1...v2.2.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* neutralize ink's CI frame suppression in interactive-render tests ([a0eb831](https://github.com/gabelul/bpx-council/commit/a0eb8311511bfd683f837d842fd7afeb50db54ce))
+
 ## [2.2.1](https://github.com/gabelul/bpx-council/compare/v2.2.0...v2.2.1) (2026-10-28)
 
 
