@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -31,7 +31,7 @@ describe("native inference SIGINT", () => {
 			child.once("error", reject); child.once("close", (code, signal) => { closed = true; resolveExit({ code, signal }); });
 		});
 		try {
-			await until(() => (stderr.includes("fixture-refresh-start") && stderr.includes("architect (") && stderr.includes("answered")) || closed);
+			await until(() => (stderr.includes("fixture-refresh-start") && stderr.includes("architect (") && stderr.includes("answered") && existsSync(join(root, "cli-armed"))) || closed);
 			if (closed) throw new Error(`Fixture ended before calls: ${JSON.stringify(await exit)} ${stderr} ${stdout}`);
 			child.stdout.pause(); child.kill("SIGINT"); child.kill("SIGINT"); await delay(100); expect(closed).toBe(false);
 			await until(() => stderr.includes("fixture-storage-drain") || closed); expect(closed, stderr).toBe(false);
