@@ -1,3 +1,4 @@
+import "./interactive-env.js";
 import React from "react";
 import { PassThrough } from "node:stream";
 import { render, renderToString, type Key } from "ink";
