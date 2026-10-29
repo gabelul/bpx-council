@@ -120,9 +120,9 @@ export async function runDoctor(configFile: string | undefined, cwd: string, pro
 		? { ...solo, images: undefined, imageData: undefined, timeoutMs: 10_000, maxOutputTokens: 32 }
 		: solo.type === "sdk"
 			? { ...solo, images: undefined, timeoutMs: Math.min(solo.timeoutMs ?? 120_000, 10_000), maxOutputBytes: 8 * 1024 }
-			// xhigh-effort models (e.g. codex gpt-6-astra@xhigh) take 7-11s even for a
-		// trivial reply; 10s made the smoke probe a coin flip on healthy routes.
-		: { ...solo, images: undefined, timeoutMs: 20_000, maxStdoutBytes: 8 * 1024, isolate: true };
+				// xhigh-effort models (e.g. codex gpt-6-astra@xhigh) take 7-11s even for a
+				// trivial reply; 10s made the smoke probe a coin flip on healthy routes.
+				: { ...solo, images: undefined, timeoutMs: 20_000, maxStdoutBytes: 8 * 1024, isolate: true };
 	if (bounded.type === "sdk") {
 		try {
 			const run = await runInvocation(signal => callAdvisor("Reply with OK only. Do not use tools.", "Reply OK.", bounded, signal), undefined,
