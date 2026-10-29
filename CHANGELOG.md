@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0](https://github.com/gabelul/bpx-council/compare/v2.2.5...v2.3.0) (2026-10-29)
+
+
+### Features
+
+* admit openai-codex and zai SDK routes; optional shared pi logins ([ccaf0d1](https://github.com/gabelul/bpx-council/commit/ccaf0d131be3044e315196eecfac9ee00fb2cc21))
+
 ## [2.2.5](https://github.com/gabelul/bpx-council/compare/v2.2.4...v2.2.5) (2026-10-29)
 
 
