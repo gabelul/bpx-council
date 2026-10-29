@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.5](https://github.com/gabelul/bpx-council/compare/v2.2.4...v2.2.5) (2026-10-29)
+
+
+### Bug Fixes
+
+* raise CLI smoke-probe bound to 20s for xhigh models ([3611c50](https://github.com/gabelul/bpx-council/commit/3611c50f6ed9cea9d38ee275996b4d6b8cba46a2))
+
 ## [2.2.4](https://github.com/gabelul/bpx-council/compare/v2.2.3...v2.2.4) (2026-10-28)
 
 
