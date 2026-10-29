@@ -60,6 +60,7 @@ level down.
 | `codex` | per-model levels, read live from its catalog |
 | `claude` | low, medium, high, xhigh, max |
 | `sdk:*` routes | validated against the provider's bundled catalog; an unsupported level is rejected, never downgraded |
+| `pi` | Pi's CLI-supported thinking levels; Pi may clamp them for the selected model |
 | everything else | ignored; no such control, so nothing is passed |
 
 Which levels are valid depends on the backend, and for codex on the model.

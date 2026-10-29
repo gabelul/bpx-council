@@ -26,10 +26,11 @@ longer version:
   revoke the account at its provider.
 - Advisor CLIs are separate programs with their own credentials and security
   model. Council's presets deny tools where it can verify the outcome (Claude
-  tools off, Pi fully sandboxed to a private temp directory, Codex in a
-  read-only sandbox — which still allows reading project files and running
-  shell reads). What a *custom* CLI command does with your repo is yours to
-  check; the name `bpx-council` doesn't sandboxes it.
+  tools off; Pi tools, extensions and discovered instructions off with a
+  private working directory; Codex in a read-only sandbox — which still
+  allows reading project files and running shell reads). None of these are
+  filesystem confinement. What a *custom* CLI command does with your repo is
+  yours to check; the name `bpx-council` doesn't sandboxes it.
 
 ## Project config boundaries
 
@@ -68,5 +69,3 @@ not a filesystem sandbox. Details per backend are in
   — agent wiring is a separate, explicit `bpx-council install`.
 - Never treats an unfamiliar version string or catalog result as proof of
   anything; absence of evidence stays absence of evidence.
-- Never bypasses a confirmation with a page helper or scripted click to
-  submit something you didn't ask for.

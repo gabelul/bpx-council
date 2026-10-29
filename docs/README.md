@@ -28,6 +28,8 @@ covers the pitch; this directory is the manual.
 
 ## Internals
 
-- [Design notes and QA captures](design/) — console captures, backend dialog specs
-- [Development docs](dev-docs/) — plans, proposals, troubleshooting. Working
+These stay in the repository and don't ship with the npm package:
+
+- [Design notes and QA captures](https://github.com/gabelul/bpx-council/tree/main/docs/design) — console captures, backend dialog specs
+- [Development docs](https://github.com/gabelul/bpx-council/tree/main/docs/dev-docs) — plans, proposals, troubleshooting. Working
   documents, not product documentation.
