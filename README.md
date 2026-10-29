@@ -10,6 +10,11 @@ different ones, arguing.
 
 ## What it looks like
 
+![Animated demo: a council run — three seats answer in parallel, then a verdict is synthesized](docs/demo/council-demo.gif)
+
+*Scripted demonstration — the interface is the real CLI; advisor replies and
+timing are fixtures. Reproduce it with `scripts/qa-demo-gif.py`.*
+
 Real output, unedited. One question, three models, each with a stance:
 
 ```bash
@@ -103,6 +108,7 @@ captures clean output.
 | [CLI reference](docs/reference.md) | Every flag, JSON receipts, doctor, env vars |
 | [Security and trust](docs/security.md) | Where credentials live, what a repo may configure, isolation limits |
 | [Examples](docs/examples/) | Full transcripts from real runs |
+| [Demo](docs/demo/council-demo.gif) | The animated walkthrough shown above (scripted fixtures) |
 | [Docs index](docs/README.md) | Everything, including internals |
 
 ## Related
