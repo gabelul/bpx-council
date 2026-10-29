@@ -40,7 +40,12 @@
     "scripts/postinstall.mjs",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/*.md",
+    "docs/examples/*.md",
+    "docs/demo/",
+    "docs/design/console-captures/*.png",
+    "docs/design/console-captures/*.md"
   ],
   "scripts": {
     "build": "tsc",
