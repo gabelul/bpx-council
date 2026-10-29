@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.1](https://github.com/gabelul/bpx-council/compare/v2.3.0...v2.3.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* align probe-bound comment with ternary branch ([1ddd610](https://github.com/gabelul/bpx-council/commit/1ddd6109022e080dfaf32c4e8745ad657a3eec4e))
+
 ## [2.3.0](https://github.com/gabelul/bpx-council/compare/v2.2.5...v2.3.0) (2026-10-29)
 
 
