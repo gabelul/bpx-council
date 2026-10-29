@@ -13,7 +13,7 @@ import { defaultBackendDiagnostics, type BackendDiagnostic, type BackendDiagnost
 export const SECTIONS = ["Advisor", "Gut-check", "Council", "Debate", "Backends", "Preferences", "Review", "Discard"] as const;
 export type Section = typeof SECTIONS[number];
 export type FieldKind = "backend" | "model" | "effort" | "mode" | "tokens" | "action" | "name" | "stance" | "prompt" | "focus";
-export type DraftAction = "route" | "persona" | "library" | "add" | "manual" | "ai" | "seat" | "edit-persona" | "reset-persona" | "preview" | "accept" | "candidate-edit" | "generator" | "generate" | "test" | "test-all" | "backend-detail" | "check-backends" | "configure-advisor" | "direct-providers" | "installed-clis" | "sdk-account" | "back";
+export type DraftAction = "route" | "persona" | "library" | "add" | "manual" | "ai" | "seat" | "edit-persona" | "reset-persona" | "preview" | "accept" | "candidate-edit" | "generator" | "generate" | "test" | "test-all" | "backend-detail" | "check-backends" | "configure-advisor" | "direct-providers" | "installed-clis" | "sdk-account" | "share-pi" | "back";
 /** Editable or actionable row; identities never share persona-name namespaces. */
 export interface DraftField { id: string; label: string; value: string; kind: FieldKind; target?: RouteTarget; action?: DraftAction; name?: string }
 /** Nested workspaces, not implicit combinations of flat fields. */
@@ -258,7 +258,7 @@ export class ConfigDraft {
 			return `${!route && target.section !== "advisor" ? "Advisor → " : ""}${backendLabel(route ?? this.draft.solo?.backend)}`;
 		};
 		const screen = this.screen;
-		if (screen.type === "direct-providers") return [...this.sdkProviders.map(provider => action("sdk-account", provider.label, `Account: ${provider.account.state}; no connection test`, undefined, provider.id)), action("back", "Back")];
+		if (screen.type === "direct-providers") return [...this.sdkProviders.map(provider => action("sdk-account", provider.label, `Account: ${provider.account.state}; no connection test`, undefined, provider.id)), action("share-pi", "Share pi logins", `${this.draft.sharePiAuth === true ? "on" : "off"} — ~/.pi/agent/auth.json; logins, removals and quota shared with pi`, undefined), action("back", "Back")];
 		if (screen.type === "installed-clis") return [action("check-backends", "Check installed CLIs", "Local versions; no model calls"), ...this.backendDiagnostics.filter(row => row.kind === "cli").map(row => action("backend-detail", row.name, `${this.backendStatus(row)} · v: ${this.backendVersion(row)}`, undefined, row.name)), action("back", "Back")];
 		if (screen.type === "backend-detail") {
 			const row = this.backendDiagnostics.find(item => item.name === screen.name);
@@ -333,6 +333,13 @@ export class ConfigDraft {
 				case "direct-providers": this.openProviders(); break;
 				case "installed-clis": this.push({ type: "installed-clis" }); break;
 				case "sdk-account": { const provider = this.sdkProviders.find(row => row.id === field.name); if (provider) this.account?.open(provider); break; }
+				case "share-pi": {
+					// Toggle in the draft only; Review saves it. Off removes the key entirely.
+					if (this.draft.sharePiAuth === true) delete this.draft.sharePiAuth;
+					else this.draft.sharePiAuth = true;
+					this.changed();
+					break;
+				}
 				case "backend-detail": this.push({ type: "backend-detail", name: field.name! }); break;
 				case "check-backends": this.startBackendCheck(); break;
 				case "configure-advisor": this.jump("Advisor"); break;

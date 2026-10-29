@@ -89,6 +89,7 @@ export async function runDoctor(configFile: string | undefined, cwd: string, pro
 		return 1;
 	}
 	console.log(`Default mode: ${config.defaultMode}`);
+	if (config.sharePiAuth === true) console.log("SDK accounts: shared with pi (~/.pi/agent/auth.json); logins, removals and quota apply to pi too");
 	console.log("Routes (presence only; no authentication tested):");
 	const routes = doctorRoutes(config);
 	for (const { seat, backend, error, source } of routes) {

@@ -92,8 +92,10 @@ Initial supported choices:
 | --- | --- |
 | OpenAI | API key |
 | Anthropic | API key or SDK-supported OAuth login |
+| OpenAI Codex (ChatGPT Plus/Pro) | SDK OAuth subscription login |
+| Z.AI | API key |
 
-OpenAI subscription login and other SDK providers aren't admitted yet. Finding
+Other SDK providers aren't admitted yet. Finding
 Codex or Claude on PATH does not import their credentials. OAuth uses the bundled
 SDK's login flow: open its displayed URL yourself and answer any masked prompts.
 Council doesn't launch a browser. Supported login flow does not establish your
@@ -105,6 +107,19 @@ this is not an OS keychain. Login, key replacement and local account removal are
 explicit, immediate changes. **Discarding a route draft does not undo them.**
 Local removal doesn't revoke the account at its provider. Project settings cannot
 manage accounts or author SDK routes; they can inherit a trusted global route.
+
+### Shared pi logins (opt-in)
+
+`sharePiAuth: true` in the global config (toggle: Backends → Direct providers →
+Share pi logins) makes Council read and write the pi coding agent's own
+`~/.pi/agent/auth.json` instead of its separate store, under the same
+file-locking protocol pi sessions already use. Council and concurrent pi
+sessions then refresh each provider's credential at most once. Council touches
+only the providers listed above; pi's other entries and unknown fields survive
+verbatim. Two disclosures come with it: consults spend the same subscription
+quota as pi, and removing an account in Council also removes pi's login for
+that provider. Copying credentials between the two stores is never done —
+rotating refresh tokens would race.
 
 After setup, explicitly choose a Direct provider in Advisor → Backend and pick a
 bundled model. Nothing gets assigned because you signed in. Model lists are
@@ -128,7 +143,9 @@ file write; storage failures may require reconnecting the account.
 SDK route tests and persona generation keep the admitted output ceiling and
 thinking level, with quota/ceiling disclosure before consent. OpenAI requires at
 least 16 output tokens; legacy Anthropic thinking needs its SDK thinking budget
-plus 1024 answer tokens. Impossible budgets are refused before a call.
+plus 1024 answer tokens. Impossible budgets are refused before a call. The
+ChatGPT codex backend accepts no server-side output-token ceiling, so codex
+routes are bounded by the byte cap and request timeout instead.
 
 ## Modes
 

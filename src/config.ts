@@ -89,6 +89,10 @@ export interface GutCheckConfig {
 export interface BpxCouncilConfig {
 	/** Trusted persona definitions, merged by name across config layers. */
 	personas?: Record<string, { stance: Stance; systemPrompt: string }>;
+	/** Share pi's own logins (~/.pi/agent/auth.json) instead of Council-owned accounts.
+	 * Opt-in, global config only. Council and concurrent pi sessions then refresh each
+	 * provider's credential at most once; local logout also removes pi's login. */
+	sharePiAuth?: boolean;
 	gutCheck?: GutCheckConfig;
 	defaultMode: "solo" | "council" | "debate" | "gut-check";
 	solo: AdvisorConfig;

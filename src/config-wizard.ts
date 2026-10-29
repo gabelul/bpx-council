@@ -11,6 +11,8 @@
  */
 
 import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { MODES, type Mode } from "./args.js";
 import { type BackendConfig, type BpxCouncilConfig, type DebateConfig, configPath, projectConfigWritePath } from "./config.js";
 import { availableBackends, parseBackendArg, type AvailableBackend } from "./detect.js";
@@ -66,6 +68,8 @@ export interface Answers {
 	councilSynthesizer?: string | null;
 	/** Debate roles when the user opted into configuring them. */
 	debate?: DebateConfig;
+	/** Set only when the user answered the shared-pi-logins question. */
+	sharePiAuth?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +134,8 @@ export function buildConfig(answers: Answers, existing?: BpxCouncilConfig): BpxC
 		config.council = { ...config.council, synthesizer: answers.councilSynthesizer };
 	}
 	if (answers.debate !== undefined) config.debate = { ...existing?.debate, ...answers.debate };
+	if (answers.sharePiAuth !== undefined) config.sharePiAuth = answers.sharePiAuth;
+	else if (existing?.sharePiAuth !== undefined) config.sharePiAuth = existing.sharePiAuth;
 	return config;
 }
 
@@ -320,6 +326,7 @@ export async function gatherAnswers(
 	available: AvailableBackend[],
 	existing: BpxCouncilConfig | undefined,
 	chrome: Chrome = plainChrome,
+	offerSharedPi = false,
 ): Promise<Answers> {
 	// Backend — arrow-key select. Plain labels so width-clipping isn't fooled by ANSI.
 	const backendOptions = available.map((b) => ({ label: b.name, value: b.name, kind: b.kind, hint: b.detail }));
@@ -405,10 +412,23 @@ export async function gatherAnswers(
 		chrome.answered("Debate", Object.entries(debate).map(([role, spec]) => `${role} ${spec ?? "shared Solo"}`).join(", ") || "unchanged");
 	}
 
+	// Shared pi logins — offered only when the caller verified pi's credential
+	// file exists, and only in the global config flow (project configs cannot set it).
+	let sharePiAuth: boolean | undefined;
+	if (offerSharedPi) {
+		const current = existing?.sharePiAuth === true;
+		const share = await pickers.confirm(chrome.ask(0, current
+			? "Keep sharing pi logins (~/.pi/agent/auth.json)? Council and pi then share logins, removals and quota."
+			: "Share pi logins (~/.pi/agent/auth.json) for SDK routes? Council and pi share logins, removals and quota."), current);
+		sharePiAuth = share;
+		chrome.answered("Pi logins", share ? "shared (~/.pi/agent/auth.json)" : "council-owned");
+	}
+
 	return {
 		mode, soloSpec, council,
 		...(councilSynthesizer !== undefined ? { councilSynthesizer } : {}),
 		...(debate !== undefined ? { debate } : {}),
+		...(sharePiAuth !== undefined ? { sharePiAuth } : {}),
 	};
 }
 

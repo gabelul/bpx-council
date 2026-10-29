@@ -40,7 +40,11 @@ export function validateConfig(value: unknown, path: string, project: boolean): 
 		}
 	};
 	const root = object(value, "config");
-	keys(root, "config", ["defaultMode", "solo", "council", "debate", "contextWindow", "personas", "gutCheck"]);
+	keys(root, "config", ["defaultMode", "solo", "council", "debate", "contextWindow", "personas", "gutCheck", "sharePiAuth"]);
+	if (root.sharePiAuth !== undefined) {
+		if (typeof root.sharePiAuth !== "boolean") fail("sharePiAuth", "must be a boolean");
+		if (project) fail("sharePiAuth", "cannot be set in project config; pi logins are shared only from global config");
+	}
 	if (root.personas !== undefined) {
 		if (project) fail("personas", "cannot define prompts in project config; use global config or explicit --config");
 		const personas = object(root.personas, "personas");

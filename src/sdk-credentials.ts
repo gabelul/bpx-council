@@ -10,13 +10,33 @@ import { lock } from "proper-lockfile";
 import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
 import type { SdkAccountSummary } from "./sdk-types.js";
 
-const PROVIDERS = new Set(["openai", "anthropic"]);
+const PROVIDERS = new Set(["openai", "anthropic", "openai-codex", "zai"]);
+/** Providers whose SDK login is OAuth-backed (subscription or OAuth console). */
+export const OAUTH_PROVIDERS = new Set(["anthropic", "openai-codex"]);
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_SECRET_BYTES = 32 * 1024;
 const MISSING_REVISION = "missing";
 interface Account { generation: string; credentialVersion: string; credential?: Credential }
 interface AccountFile { version: 1; accounts: Record<string, Account> }
-interface AccountIntent { provider: string; expectedRevision: string; receipt: { changed: boolean } }
+/** Explicit login/logout identity; exported for the shared-pi store's CAS. */
+export interface AccountIntent { provider: string; expectedRevision: string; receipt: { changed: boolean } }
+
+/** Credential backend surface the SDK provider service depends on; both the
+ * strict Council-owned store and the opt-in shared-pi store implement it. */
+export interface CredentialService extends CredentialStore {
+	/** Shared shutdown leases for SDK work. */
+	readonly barrier: SdkOperationBarrier;
+	/** Safe local metadata for one admitted account. @param provider ID. @returns No credentials. */
+	summary(provider: string): SdkAccountSummary;
+	/** Freeze confirmed account identity through SDK auth and dispatch. @param provider ID. @param revision Confirmed identity. @param task SDK operation. @returns Operation result. */
+	inferenceAction<T>(provider: string, revision: string, task: () => Promise<T>): Promise<T>;
+	/** Report only safe operation-scoped persistence loss, never a raw error. @returns Whether reconnect is required. */
+	synchronizationFailed(): boolean;
+	/** Check identity immediately before provider dispatch. @param provider ID. @returns Nothing. */
+	assertRevision(provider: string): void;
+	/** Mark SDK login/logout as explicit CAS account action. @param intent Expected identity and commit receipt. @param task SDK action. @returns Scoped result. */
+	accountAction<T>(intent: AccountIntent, task: () => Promise<T>): Promise<T>;
+}
 
 /** Private, fixed-message storage error; never carries filesystem paths or SDK causes. */
 export class SdkCredentialError extends Error {
@@ -45,18 +65,34 @@ function secret(value: unknown): value is string {
 export function validSdkCredential(provider: string, value: unknown): value is Credential {
 	if (!PROVIDERS.has(provider) || !record(value)) return false;
 	// Stock SDK classifies non-sk OpenAI values as ChatGPT tokens, not API keys.
-	if (value.type === "api_key") return Object.keys(value).every(key => ["type", "key"].includes(key)) && secret(value.key)
+	if (value.type === "api_key") return provider !== "openai-codex" && Object.keys(value).every(key => ["type", "key"].includes(key)) && secret(value.key)
 		&& (provider !== "openai" || value.key.startsWith("sk-"));
-	return provider === "anthropic" && value.type === "oauth"
-		&& Object.keys(value).every(key => ["type", "access", "refresh", "expires"].includes(key))
+	return OAUTH_PROVIDERS.has(provider) && value.type === "oauth"
+		&& Object.keys(value).every(key => ["type", "access", "refresh", "expires", ...(provider === "openai-codex" ? ["accountId"] : [])].includes(key))
 		&& secret(value.access) && secret(value.refresh) && typeof value.expires === "number"
-		&& Number.isFinite(value.expires) && value.expires >= 0;
+		&& Number.isFinite(value.expires) && value.expires >= 0
+		&& (provider !== "openai-codex" || value.accountId === undefined || typeof value.accountId === "string");
+}
+
+/** Lenient shared-store validation: required fields must hold, unknown fields survive verbatim.
+ * Pi's auth.json may carry fields this Council version has never seen; the shared
+ * store must never drop or reject them, only refuse shapes it cannot honor.
+ * @param provider ID. @param value Raw SDK value. @returns Validity. */
+export function validSharedSdkCredential(provider: string, value: unknown): value is Credential {
+	if (!PROVIDERS.has(provider) || !record(value)) return false;
+	if (value.type === "api_key") return provider !== "openai-codex" && secret(value.key) && (provider !== "openai" || value.key.startsWith("sk-"));
+	return OAUTH_PROVIDERS.has(provider) && value.type === "oauth" && secret(value.access) && secret(value.refresh)
+		&& typeof value.expires === "number" && Number.isFinite(value.expires) && value.expires >= 0
+		&& (provider !== "openai-codex" || value.accountId === undefined || typeof value.accountId === "string");
 }
 
 /** Check provider before any filesystem access. @param provider Exact ID. @returns Nothing. */
 function admit(provider: string): void {
 	if (!PROVIDERS.has(provider)) throw new SdkCredentialError("provider");
 }
+
+/** Admitted provider check for external stores (shared pi mode). @param provider Exact ID. @returns Admission. */
+export function isSdkCredentialProvider(provider: string): boolean { return PROVIDERS.has(provider); }
 
 /** Parse bounded own format, refusing malformed or unmanaged content. @param text File text. @returns Private account file. */
 function decode(text: string): AccountFile {

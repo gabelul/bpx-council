@@ -10,6 +10,10 @@ export function sdkBudgetError(model: Model<Api>, effort?: string, requested?: n
 	if (!Number.isSafeInteger(ceiling) || ceiling < 1 || ceiling > Math.min(128_000, model.maxTokens)) return "SDK output token budget exceeds model limit or is invalid.";
 	if (model.provider === "openai" && (model.api !== "openai-responses" || (model as Model<"openai-responses">).compat?.supportsMaxOutputTokens === false)) return "SDK model cannot honor an exact output token ceiling.";
 	if (model.provider === "openai" && ceiling < 16) return "OpenAI Responses requires an output token ceiling of at least 16.";
+	// The ChatGPT codex backend accepts no output-token budget; byte cap and
+	// stream termination bound the answer instead of a server-side token limit.
+	if (model.provider === "openai-codex" && model.api !== "openai-codex-responses") return "SDK model transport is unsupported.";
+	if (model.provider === "zai" && model.api !== "openai-completions") return "SDK model transport is unsupported.";
 	if (model.provider === "anthropic" && model.api !== "anthropic-messages") return "SDK model transport is unsupported.";
 	if (model.provider === "anthropic" && (model as Model<"anthropic-messages">).compat?.forceAdaptiveThinking !== true && effort && effort !== "off") {
 		const thinking = thinkingBudgetForLevel(effort as ThinkingLevel);
@@ -22,7 +26,8 @@ export function sdkBudgetError(model: Model<Api>, effort?: string, requested?: n
  * @param provider Admitted ID. @returns Fixed local refusal, never environment values.
  */
 export function sdkVendorEnvironmentError(provider: string): string | undefined {
-	const prefix = provider === "openai" ? "OPENAI" : "ANTHROPIC";
+	const prefix = provider === "openai" || provider === "openai-codex" ? "OPENAI" : provider === "anthropic" ? "ANTHROPIC" : undefined;
+	if (!prefix) return undefined;
 	const logging = process.env[`${prefix}_LOG`];
 	if (logging && !["off", "warn", "error"].includes(logging)) return "SDK vendor debug logging is unsupported; unset provider LOG before calling.";
 	if (process.env[`${prefix}_CUSTOM_HEADERS`]) return "SDK vendor ambient custom headers are unsupported; unset provider CUSTOM_HEADERS before calling.";
@@ -35,13 +40,13 @@ export function sdkVendorEnvironmentError(provider: string): string | undefined 
  */
 export function sdkOwnFetch(provider: string, baseUrl: string, key: string | undefined, transport: typeof fetch, beforeSend: () => void): typeof fetch {
 	const base = new URL(baseUrl);
+	const expectedPath = `${base.pathname.replace(/\/$/, "")}/${provider === "openai" ? "responses" : provider === "anthropic" ? "v1/messages" : provider === "openai-codex" ? "codex/responses" : "chat/completions"}`;
 	return async (input, init) => {
 		const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
-		const expectedPath = `${base.pathname.replace(/\/$/, "")}/${provider === "openai" ? "responses" : "v1/messages"}`;
 		if (!key || url.origin !== base.origin || url.pathname !== expectedPath || url.username || url.password || url.hash) throw new Error("Unsupported SDK endpoint or authentication.");
 		const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
 		headers.delete("openai-organization"); headers.delete("openai-project"); headers.delete("api-key");
-		if (provider === "openai" || key.includes("sk-ant-oat")) { headers.set("authorization", `Bearer ${key}`); headers.delete("x-api-key"); }
+		if (provider === "openai" || provider === "openai-codex" || key.includes("sk-ant-oat")) { headers.set("authorization", `Bearer ${key}`); headers.delete("x-api-key"); }
 		else { headers.set("x-api-key", key); headers.delete("authorization"); }
 		beforeSend();
 		return transport(input, { ...init, headers, redirect: "error" });

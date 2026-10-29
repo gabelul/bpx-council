@@ -316,9 +316,10 @@ function accountLayout(c: ConfigDraft, geometry: WorkbenchGeometry) {
 	const choiceRows = Math.min(choices.length, Math.max(1, dialog.innerHeight - 4));
 	const bodyHeight = Math.max(1, dialog.innerHeight - 2 - Number(input) - choiceRows - Number(view.phase === "receipt"));
 	const warning = "Account changes persist immediately. Discard cannot undo them.";
+	const shared = c.draft.sharePiAuth === true ? "Shared with pi: logins, removals and quota apply to pi too." : "";
 	const copy = view.cancelling ? "Cancelling; awaiting SDK and account storage cleanup."
-		: view.phase === "methods" ? `Account: ${view.provider.account.state}. Stored does not mean authenticated.\nCLI logins are separate.\n${warning}`
-		: view.phase === "logout" ? `Remove Council's local account only; not provider-side revocation. Cancel keeps it.\n${warning}`
+		: view.phase === "methods" ? `Account: ${view.provider.account.state}. Stored does not mean authenticated.\nCLI logins are separate.\n${shared}\n${warning}`
+		: view.phase === "logout" ? `${shared ? "Removes the shared login; pi loses it too. " : ""}Remove Council's local account only; not provider-side revocation. Cancel keeps it.\n${warning}`
 		: view.phase === "key" && !view.busy ? "Enter saves NOW.\nNo draft undo.\nAPI key: Enter saves literal input."
 		: view.phase === "key" && view.busy ? "Saving account now. Discard cannot undo it.\nWaiting for SDK and account storage cleanup."
 		: view.phase === "receipt" ? `${view.receipt?.changed ? "Account change saved." : view.receipt?.cancelled ? "Cancelled; no account change reported." : view.receipt?.ok ? "Account unchanged." : "Account action failed."}${view.receipt?.cancelled && view.receipt.changed ? " Cancellation arrived after account change; no rollback." : ""}\n${view.receipt?.error ?? "Stored account is not a connection test."}\n${warning}`

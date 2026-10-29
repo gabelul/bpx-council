@@ -60,6 +60,12 @@ describe("SDK route namespace", () => {
 });
 
 describe("SDK config trust and field edits", () => {
+	it("accepts sharePiAuth only as a boolean, and never in project config", () => {
+		expect(() => validateConfig({ sharePiAuth: true }, "global", false)).not.toThrow();
+		expect(() => validateConfig({ sharePiAuth: false }, "global", false)).not.toThrow();
+		expect(() => validateConfig({ sharePiAuth: "yes" }, "global", false)).toThrow(/boolean/);
+		expect(() => validateConfig({ sharePiAuth: true }, "project", true)).toThrow(/project/);
+	});
 	it("allows provider-only staged trusted pins but no project SDK authoring", () => {
 		const staged = { solo: { backend: { type: "sdk", provider: "openai" } } };
 		expect(() => validateConfig(staged, "trusted", false)).not.toThrow();

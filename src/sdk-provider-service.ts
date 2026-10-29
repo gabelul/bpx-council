@@ -1,14 +1,35 @@
 import { createModels, getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 import type { MutableModels, Provider } from "@earendil-works/pi-ai/models";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { zaiProvider } from "@earendil-works/pi-ai/providers/zai";
 import type { AuthEvent, AuthInteraction, AuthPrompt, ModelsStore, ModelsStoreEntry, ModelThinkingLevel, ThinkingLevel, Usage, Model, Api, ProviderRequestOptions } from "@earendil-works/pi-ai";
 import type { BackendResult } from "./backend.js";
-import { SdkCredentialError, SdkCredentials, SdkOperationBarrier } from "./sdk-credentials.js";
+import { SdkCredentialError, SdkCredentials, SdkOperationBarrier, OAUTH_PROVIDERS } from "./sdk-credentials.js";
+import type { CredentialService } from "./sdk-credentials.js";
+import { PiSharedCredentials } from "./pi-shared-credentials.js";
 import { sdkBoundedFetch, sdkBudgetError, sdkOwnFetch, sdkVendorEnvironmentError } from "./sdk-inference-policy.js";
 import type { SdkAccountResult, SdkAuthInteraction, SdkAuthMethod, SdkCallRequest, SdkModelSummary, SdkPreflight, SdkPreflightBounds, SdkProviderService, SdkProviderSummary, SdkRoute } from "./sdk-types.js";
 
-const PROVIDER_IDS = ["openai", "anthropic"] as const;
+const PROVIDER_IDS = ["openai", "anthropic", "openai-codex", "zai"] as const;
+/** Bundled factories in admission order; baseUrl pins the audited endpoint per provider. */
+const PROVIDER_FACTORIES = (): Provider[] => [openaiProvider(), anthropicProvider(), openaiCodexProvider(), zaiProvider()];
+/** The only SDK model endpoints this Council admits, pinned per provider. */
+const EXPECTED_BASE_URLS: Record<string, string> = {
+	openai: "https://api.openai.com/v1",
+	anthropic: "https://api.anthropic.com",
+	"openai-codex": "https://chatgpt.com/backend-api",
+	zai: "https://api.z.ai/api/coding/paas/v4",
+};
+/** Hosts each provider's OAuth login may send the user to; anything else is refused. */
+const LOGIN_URL_HOSTS: Record<string, readonly string[]> = {
+	anthropic: ["claude.ai"],
+	"openai-codex": ["auth.openai.com", "chatgpt.com"],
+};
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -36,10 +57,12 @@ class CouncilModelsStore implements ModelsStore {
 export interface SdkProviderServiceOptions {
 	/** Explicit own directory with symlink-free ancestors; default binds canonical HOME lazily. */
 	directory?: string;
+	/** Read and write the pi agent's own credential file instead of Council storage. */
+	shared?: boolean;
 	/** Test-only factory injection, retaining production admission and storage rules. */
 	providers?: readonly Provider[];
 	/** Test-only own store with the same strict production implementation. */
-	credentials?: SdkCredentials;
+	credentials?: CredentialService;
 }
 
 /** Read a bounded SDK/UI metadata string. @param value Metadata. @returns Terminal-safe text. */
@@ -99,7 +122,7 @@ function cancellableInput(task: Promise<string>, signal: AbortSignal): Promise<s
 }
 
 /** Map public SDK-owned login to frozen Council interaction. @param ui Transient bridge. @param signal Deadline/caller cancellation. @returns SDK interaction. */
-function authInteraction(ui: SdkAuthInteraction, signal: AbortSignal): AuthInteraction {
+function authInteraction(ui: SdkAuthInteraction, signal: AbortSignal, provider: string): AuthInteraction {
 	return {
 		signal,
 		/** @param prompt SDK input metadata. @returns Transient input. */
@@ -117,7 +140,7 @@ function authInteraction(ui: SdkAuthInteraction, signal: AbortSignal): AuthInter
 			if (signal.aborted) return;
 			if (event.type === "auth_url") {
 				const url = new URL(event.url);
-				if (url.protocol !== "https:" || url.hostname !== "claude.ai" || url.username || url.password) throw new Error("Unsupported login URL.");
+				if (url.protocol !== "https:" || url.username || url.password || !(LOGIN_URL_HOSTS[provider] ?? []).includes(url.hostname)) throw new Error("Unsupported login URL.");
 				ui.onEvent({ type: "url", url: url.href, instructions: event.instructions && display(event.instructions) });
 			} else if (event.type === "progress" || event.type === "info") {
 				ui.onEvent({ type: "progress", message: display(event.message) });
@@ -129,12 +152,12 @@ function authInteraction(ui: SdkAuthInteraction, signal: AbortSignal): AuthInter
 /** Direct SDK provider/account boundary with no ambient authentication or automatic refresh/discovery. */
 class CouncilSdkProviderService implements SdkProviderService {
 	readonly #barrier: SdkOperationBarrier;
-	readonly #credentials: SdkCredentials;
+	readonly #credentials: CredentialService;
 	readonly #models: MutableModels;
 	readonly #testProviders: readonly Provider[] | undefined;
 	/** @param options Explicit synthetic seams or production defaults. No storage reads here. */
 	constructor(options: SdkProviderServiceOptions) {
-		this.#credentials = options.credentials ?? new SdkCredentials(options.directory);
+		this.#credentials = options.credentials ?? (options.shared ? new PiSharedCredentials(options.directory) : new SdkCredentials(options.directory));
 		this.#barrier = this.#credentials.barrier;
 		this.#testProviders = options.providers;
 		this.#models = this.#operationModels();
@@ -143,25 +166,30 @@ class CouncilSdkProviderService implements SdkProviderService {
 	#operationModels(captureCredential?: (credential: string) => void): MutableModels {
 		const models = createModels({ credentials: this.#credentials, modelsStore: new CouncilModelsStore(),
 			authContext: { env: async () => undefined, fileExists: async () => false } });
-		const providers = this.#testProviders ?? [openaiProvider(), anthropicProvider()];
+		const providers = this.#testProviders ?? PROVIDER_FACTORIES();
 		for (const provider of providers) {
 			if (!PROVIDER_IDS.includes(provider.id as typeof PROVIDER_IDS[number]) || models.getProvider(provider.id)) throw new Error("Unsupported SDK provider factory.");
+			const expectedUrl = EXPECTED_BASE_URLS[provider.id];
 			const bundled = Object.freeze(provider.getModels().map(model => {
-				if (!this.#testProviders && (model.provider !== provider.id || model.baseUrl !== (provider.id === "openai" ? "https://api.openai.com/v1" : "https://api.anthropic.com"))) throw new Error("Unsupported SDK model endpoint.");
+				if (!this.#testProviders && (model.provider !== provider.id || model.baseUrl !== expectedUrl)) throw new Error("Unsupported SDK model endpoint.");
 				return Object.freeze({ ...model, headers: model.headers && Object.freeze({ ...model.headers }), compat: model.compat && Object.freeze({ ...model.compat }),
 					thinkingLevelMap: model.thinkingLevelMap && Object.freeze({ ...model.thinkingLevelMap }) });
 			}));
 			/** Freeze effective auth/tenant routing without changing global environment. @param model Exact model. @param options Resolved SDK options. @returns Public provider options. */
 			const ownOptions = (model: Model<Api>, options: ProviderRequestOptions = {}): Pick<ProviderRequestOptions, "headers" | "fetch"> => {
-				if (!this.#testProviders && model.baseUrl !== (provider.id === "openai" ? "https://api.openai.com/v1" : "https://api.anthropic.com")) throw new Error("Unsupported SDK model endpoint.");
+				if (!this.#testProviders && model.baseUrl !== expectedUrl) throw new Error("Unsupported SDK model endpoint.");
 				if (sdkVendorEnvironmentError(provider.id)) throw new Error("Unsupported SDK vendor environment.");
+				// openai-codex resolves OAuth into a composed bearer string; only the
+				// plain openai provider takes literal sk- API keys.
 				if (provider.id === "openai" && !options.apiKey?.startsWith("sk-")) throw new Error("OpenAI API key format is unsupported.");
 				if (options.apiKey) captureCredential?.(options.apiKey);
 				return { headers: { ...options.headers, "OpenAI-Organization": null, "OpenAI-Project": null, "api-key": null },
 					fetch: sdkOwnFetch(provider.id, model.baseUrl, options.apiKey, options.fetch ?? globalThis.fetch, () => this.#credentials.assertRevision(provider.id)) };
 			};
 			const apiKey = provider.auth.apiKey;
-			const oauth = provider.id === "anthropic" ? provider.auth.oauth : undefined;
+			// Expose only OAuth logins whose stored credential shape Council admits;
+			// e.g. the plain openai provider ships a ChatGPT flow we must not offer.
+			const oauth = OAUTH_PROVIDERS.has(provider.id) ? provider.auth.oauth : undefined;
 			models.setProvider({ ...provider, getModels: () => bundled,
 				/** Guard resolved identity/transport; retain generic API-specific options. @param model Pin. @param context Transcript. @param streamOptions SDK options. @returns SDK stream. */
 				stream: (model, context, streamOptions) => {
@@ -221,7 +249,7 @@ class CouncilSdkProviderService implements SdkProviderService {
 		return this.#accountOperation(provider, signal, async (combined) => {
 			const selected = this.#models.getProvider(provider);
 			if (!selected || !(method === "api_key" ? selected.auth.apiKey?.login : method === "oauth" && selected.auth.oauth?.login)) throw new Error("Unsupported SDK login method.");
-			await this.#operationModels().login(provider, method, authInteraction(interaction, combined), { agentName: "bpx-council" });
+			await this.#operationModels().login(provider, method, authInteraction(interaction, combined, provider), { agentName: "bpx-council" });
 		});
 	}
 	/** Remove own account iff captured revision still matches. @param provider ID. @param expectedRevision Captured identity. @param signal Cancellation. @returns Local receipt, not remote revocation. */
@@ -287,16 +315,21 @@ class CouncilSdkProviderService implements SdkProviderService {
 				const stream = models.streamSimple(model, { systemPrompt: request.systemPrompt,
 					messages: [{ role: "user", content: request.userMessage, timestamp: Date.now() }], tools: [] },
 					{ reasoning: request.effort === "off" ? undefined : request.effort as ThinkingLevel | undefined, maxTokens: tokenBudget, maxRetries: 0, signal, cacheRetention: "none",
+					// Keep codex on SSE: its WebSocket transport would bypass the guarded fetch hook.
+					...(request.provider === "openai-codex" ? { transport: "sse" as const } : {}),
 						fetch: sdkBoundedFetch(globalThis.fetch, Math.max(64 * 1024, cap * 8 + 64 * 1024), () => { capped = true; controller.abort(); }),
 						/** Restore total ceiling only for SDK legacy thinking's additive answer budget. @param payload SDK request. @returns Public payload overlay when needed. */
 						onPayload: payload => {
 							if (!payload || typeof payload !== "object") { changedPayload = true; throw new Error("Unsupported SDK request payload."); }
 							const body = payload as Record<string, unknown>;
-							const limit = request.provider === "openai" ? body.max_output_tokens ?? body.max_completion_tokens ?? body.max_tokens : body.max_tokens;
+							const limit = request.provider === "openai" || request.provider === "openai-codex" ? body.max_output_tokens ?? body.max_completion_tokens ?? body.max_tokens : body.max_tokens;
 							const legacyThinking = request.provider === "anthropic" && (model as Model<"anthropic-messages">).compat?.forceAdaptiveThinking !== true && request.effort && request.effort !== "off";
 							if (body.model === model.id && legacyThinking && typeof limit === "number" && limit >= tokenBudget
 								&& (!Array.isArray(body.tools) || body.tools.length === 0)) return { ...body, max_tokens: tokenBudget };
-							if (body.model !== model.id || limit !== tokenBudget || (Array.isArray(body.tools) && body.tools.length > 0)) {
+							// The ChatGPT codex backend accepts no output-token budget; accept its
+							// unpinned body, byte cap and stream events still bound the answer.
+							const codexUnbudgeted = request.provider === "openai-codex" && limit === undefined;
+							if (body.model !== model.id || (!codexUnbudgeted && limit !== tokenBudget) || (Array.isArray(body.tools) && body.tools.length > 0)) {
 								changedPayload = true; throw new Error("SDK cannot honor exact request budget/model/tools.");
 							}
 						} });
@@ -346,8 +379,22 @@ class CouncilSdkProviderService implements SdkProviderService {
 }
 
 let singleton: SdkProviderService | undefined;
-/** Lazily construct production boundary; construction never reads credentials or calls network. @returns Process-local service. */
-export function getSdkProviderService(): SdkProviderService { return singleton ??= createSdkProviderService(); }
+/** Lazily construct production boundary; construction never reads credentials or calls network.
+ * Honors the global sharePiAuth opt-in: share the pi agent's logins instead of Council storage.
+ * @returns Process-local service. */
+export function getSdkProviderService(): SdkProviderService {
+	return singleton ??= createSdkProviderService({ shared: sharedPiAuthOptedIn() });
+}
+
+/** Read only the sharePiAuth boolean from the global config; never a project file.
+ * Raw read on purpose: storage selection happens before trusted-config validation.
+ * @returns Whether the user opted into sharing pi's auth.json. */
+function sharedPiAuthOptedIn(): boolean {
+	try {
+		const file = JSON.parse(readFileSync(join(homedir(), ".bpx-council.json"), "utf8")) as { sharePiAuth?: unknown };
+		return file.sharePiAuth === true;
+	} catch { return false; }
+}
 
 /** Construct isolated service for explicit synthetic tests or production singleton. @param options Own directory/test seams. @returns Frozen Council interface implementation. */
 export function createSdkProviderService(options: SdkProviderServiceOptions = {}): SdkProviderService { return new CouncilSdkProviderService(options); }

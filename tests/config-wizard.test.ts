@@ -89,6 +89,12 @@ describe("backendConfigFromSpec", () => {
 });
 
 describe("buildConfig", () => {
+	it("carries an explicit sharePiAuth answer and preserves an existing one", () => {
+		expect(buildConfig({ mode: "solo", soloSpec: "codex", sharePiAuth: true }).sharePiAuth).toBe(true);
+		expect(buildConfig({ mode: "solo", soloSpec: "codex", sharePiAuth: false }).sharePiAuth).toBe(false);
+		expect(buildConfig({ mode: "solo", soloSpec: "codex" }, { defaultMode: "solo", sharePiAuth: true }).sharePiAuth).toBe(true);
+		expect(buildConfig({ mode: "solo", soloSpec: "codex" }, { defaultMode: "solo" }).sharePiAuth).toBeUndefined();
+	});
 	it("writes mode and advisor backend from the answers", () => {
 		const cfg = buildConfig({ mode: "council", soloSpec: "codex:gpt-5-codex" });
 		expect(cfg.defaultMode).toBe("council");
