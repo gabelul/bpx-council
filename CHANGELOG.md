@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.2](https://github.com/gabelul/bpx-council/compare/v2.3.1...v2.3.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* size council seats and restore additive thinking budgets ([8430a80](https://github.com/gabelul/bpx-council/commit/8430a80e5c043b43ccbbcd91447d8782741c701a))
+
 ## [2.3.1](https://github.com/gabelul/bpx-council/compare/v2.3.0...v2.3.1) (2026-10-29)
 
 
