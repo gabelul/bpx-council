@@ -318,14 +318,22 @@ class CouncilSdkProviderService implements SdkProviderService {
 					// Keep codex on SSE: its WebSocket transport would bypass the guarded fetch hook.
 					...(request.provider === "openai-codex" ? { transport: "sse" as const } : {}),
 						fetch: sdkBoundedFetch(globalThis.fetch, Math.max(64 * 1024, cap * 8 + 64 * 1024), () => { capped = true; controller.abort(); }),
-						/** Restore total ceiling only for SDK legacy thinking's additive answer budget. @param payload SDK request. @returns Public payload overlay when needed. */
+						/** Restore the SDK's additive thinking budget for legacy Anthropic thinking, keeping the answer ceiling exact. @param payload SDK request. @returns Public payload overlay when needed. */
 						onPayload: payload => {
 							if (!payload || typeof payload !== "object") { changedPayload = true; throw new Error("Unsupported SDK request payload."); }
 							const body = payload as Record<string, unknown>;
 							const limit = request.provider === "openai" || request.provider === "openai-codex" ? body.max_output_tokens ?? body.max_completion_tokens ?? body.max_tokens : body.max_tokens;
 							const legacyThinking = request.provider === "anthropic" && (model as Model<"anthropic-messages">).compat?.forceAdaptiveThinking !== true && request.effort && request.effort !== "off";
-							if (body.model === model.id && legacyThinking && typeof limit === "number" && limit >= tokenBudget
-								&& (!Array.isArray(body.tools) || body.tools.length === 0)) return { ...body, max_tokens: tokenBudget };
+						if (body.model === model.id && legacyThinking && (!Array.isArray(body.tools) || body.tools.length === 0)) {
+							const thinking = body.thinking as { budget_tokens?: unknown } | undefined;
+							if (thinking && typeof thinking.budget_tokens === "number" && Number.isSafeInteger(thinking.budget_tokens) && thinking.budget_tokens >= 0) {
+								// Legacy thinking shares max_tokens with the answer: restore the SDK's
+								// additive total so thinking cannot starve the exact answer budget.
+								const total = thinking.budget_tokens + tokenBudget;
+								if (total > Math.min(128_000, model.maxTokens)) { changedPayload = true; throw new Error("SDK cannot honor exact request budget/model/tools."); }
+								return { ...body, max_tokens: total };
+							}
+						}
 							// The ChatGPT codex backend accepts no output-token budget; accept its
 							// unpinned body, byte cap and stream events still bound the answer.
 							const codexUnbudgeted = request.provider === "openai-codex" && limit === undefined;

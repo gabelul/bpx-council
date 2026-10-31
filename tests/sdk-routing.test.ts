@@ -66,6 +66,32 @@ describe("SDK config trust and field edits", () => {
 		expect(() => validateConfig({ sharePiAuth: "yes" }, "global", false)).toThrow(/boolean/);
 		expect(() => validateConfig({ sharePiAuth: true }, "project", true)).toThrow(/project/);
 	});
+	it("applies Council seat sizing to explicit SDK routes but not inherited seats", () => {
+		const shared = { type: "sdk", provider: "openai", model: "gpt-5-mini", timeoutMs: 300000 } as const;
+		const explicit = resolveSeatBackend("sdk:anthropic:claude-sonnet-4-6", shared as never, { timeoutMs: 120000, maxOutputTokens: 32768 });
+		expect(explicit).toMatchObject({ type: "sdk", provider: "anthropic", timeoutMs: 120000, maxOutputTokens: 32768 });
+		const inherited = resolveSeatBackend(null, shared as never, { timeoutMs: 120000, maxOutputTokens: 32768 });
+		expect(inherited).toMatchObject({ timeoutMs: 300000 });
+		expect((inherited as Record<string, unknown>).maxOutputTokens).toBeUndefined();
+	});
+
+	it("sizes the Solo SDK/HTTP ceiling via solo.backend.maxOutputTokens", () => {
+		const sized = { solo: { backend: { type: "sdk", provider: "zai", model: "glm-5.3-flash", effort: "max", timeoutMs: 600000, maxOutputTokens: 32768 } } };
+		expect(() => validateConfig(sized, "global", false)).not.toThrow();
+		expect(() => validateConfig({ solo: { backend: { ...sized.solo.backend, maxOutputTokens: 8 } } }, "global", false)).toThrow(/16 to 128000/);
+		expect(() => validateConfig({ solo: { backend: { ...sized.solo.backend, maxOutputTokens: 200000 } } }, "global", false)).toThrow(/16 to 128000/);
+		expect(() => validateConfig({ solo: { backend: { type: "cli", command: "codex", maxOutputTokens: 4096 } } }, "global", false)).toThrow(/requires an HTTP or SDK backend/);
+	});
+
+	it("sizes Council seats globally: timeoutMs and maxOutputTokens bounds, project refused", () => {
+		expect(() => validateConfig({ council: { timeoutMs: 300000, maxOutputTokens: 32768 } }, "global", false)).not.toThrow();
+		expect(() => validateConfig({ council: { timeoutMs: 0 } }, "global", false)).toThrow(/timeoutMs/);
+		expect(() => validateConfig({ council: { timeoutMs: 1_800_001 } }, "global", false)).toThrow(/timeoutMs/);
+		expect(() => validateConfig({ council: { maxOutputTokens: 8 } }, "global", false)).toThrow(/maxOutputTokens/);
+		expect(() => validateConfig({ council: { maxOutputTokens: 200000 } }, "global", false)).toThrow(/maxOutputTokens/);
+		expect(() => validateConfig({ council: { timeoutMs: 300000 } }, "project", true)).toThrow(/project/);
+		expect(() => validateConfig({ council: { maxOutputTokens: 32768 } }, "project", true)).toThrow(/project/);
+	});
 	it("allows provider-only staged trusted pins but no project SDK authoring", () => {
 		const staged = { solo: { backend: { type: "sdk", provider: "openai" } } };
 		expect(() => validateConfig(staged, "trusted", false)).not.toThrow();

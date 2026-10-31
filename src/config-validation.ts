@@ -73,7 +73,7 @@ export function validateConfig(value: unknown, path: string, project: boolean): 
 		if (solo.thinkingLevel !== undefined && !["low", "medium", "high", "xhigh", "max", "ultra"].includes(solo.thinkingLevel as string)) fail("solo.thinkingLevel", "is invalid");
 		if (solo.backend !== undefined) {
 			const backend = object(solo.backend, "solo.backend");
-			keys(backend, "solo.backend", ["type", "command", "args", "timeoutMs", "startupMs", "sessionPrefix", "isolate", "images", "provider", "model", "effort", "apiKeyEnv", "baseUrl"]);
+			keys(backend, "solo.backend", ["type", "command", "args", "timeoutMs", "startupMs", "sessionPrefix", "isolate", "images", "provider", "model", "effort", "apiKeyEnv", "baseUrl", "maxOutputTokens"]);
 			if (!["cli", "http", "tmux", "sdk"].includes(backend.type as string)) fail("solo.backend.type", "is invalid");
 			if (project && backend.command !== undefined) fail("solo.backend.command", "cannot select a CLI in project config; use global config or explicit --config");
 			if (project && backend.type !== "http") fail("solo.backend.type", "project config accepts only Anthropic HTTP; use global config or explicit --config for CLI routes");
@@ -93,6 +93,8 @@ export function validateConfig(value: unknown, path: string, project: boolean): 
 			if (backend.args !== undefined && (!Array.isArray(backend.args) || !backend.args.every((arg: unknown) => typeof arg === "string"))) fail("solo.backend.args", "must be a string array");
 			for (const key of ["timeoutMs", "startupMs"]) if (backend[key] !== undefined && (!Number.isSafeInteger(backend[key]) || (backend[key] as number) < 1 || (backend[key] as number) > 1_800_000)) fail(`solo.backend.${key}`, "must be an integer from 1 to 1800000");
 			if (backend.isolate !== undefined && typeof backend.isolate !== "boolean") fail("solo.backend.isolate", "must be boolean");
+			if (backend.maxOutputTokens !== undefined && (backend.type !== "http" && backend.type !== "sdk")) fail("solo.backend.maxOutputTokens", "requires an HTTP or SDK backend");
+			if (backend.maxOutputTokens !== undefined && (!Number.isSafeInteger(backend.maxOutputTokens) || (backend.maxOutputTokens as number) < 16 || (backend.maxOutputTokens as number) > 128_000)) fail("solo.backend.maxOutputTokens", "must be an integer from 16 to 128000");
 			if (backend.images !== undefined) fail("solo.backend.images", "cannot be configured; pass validated paths with --image");
 			for (const key of ["model", "effort", "apiKeyEnv", "baseUrl", "sessionPrefix"]) if (backend[key] !== undefined) string(backend[key], `solo.backend.${key}`);
 			if (project) {
@@ -105,7 +107,7 @@ export function validateConfig(value: unknown, path: string, project: boolean): 
 	}
 	if (root.council !== undefined) {
 		const council = object(root.council, "council");
-		keys(council, "council", ["backends", "synthesizer", "members"]);
+		keys(council, "council", ["members", "backends", "synthesizer", "timeoutMs", "maxOutputTokens"]);
 		if (council.members !== undefined) {
 			if (!Array.isArray(council.members) || council.members.length < 1 || council.members.length > 8) fail("council.members", "must contain 1 to 8 names");
 			const seen = new Set<string>();
@@ -130,6 +132,10 @@ export function validateConfig(value: unknown, path: string, project: boolean): 
 				route(spec, project ? `council.backends.${seat}` : "council.backends entry");
 			}
 		}
+		keys(council, "council", ["members", "backends", "synthesizer", "timeoutMs", "maxOutputTokens"]);
+		if (council.timeoutMs !== undefined && (!Number.isSafeInteger(council.timeoutMs) || (council.timeoutMs as number) < 1 || (council.timeoutMs as number) > 1_800_000)) fail("council.timeoutMs", "must be an integer from 1 to 1800000");
+		if (council.maxOutputTokens !== undefined && (!Number.isSafeInteger(council.maxOutputTokens) || (council.maxOutputTokens as number) < 16 || (council.maxOutputTokens as number) > 128_000)) fail("council.maxOutputTokens", "must be an integer from 16 to 128000");
+		if (project && (council.timeoutMs !== undefined || council.maxOutputTokens !== undefined)) fail("council.timeoutMs/maxOutputTokens", "cannot be set in project config; use global config or explicit --config");
 		if (council.synthesizer !== undefined) route(council.synthesizer, "council.synthesizer");
 	}
 	if (root.debate !== undefined) {

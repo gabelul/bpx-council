@@ -63,6 +63,16 @@ level down.
 | `pi` | Pi's CLI-supported thinking levels; Pi may clamp them for the selected model |
 | everything else | ignored; no such control, so nothing is passed |
 
+Thinking and reasoning tokens count against the output ceiling on
+Anthropic (legacy budget thinking) and Z.AI (GLM reasoning), so
+long-form reviews at high effort need a bigger ceiling than the
+8192-token default. Size it in config: `solo.backend.maxOutputTokens`
+for Solo, `council.maxOutputTokens` plus `council.timeoutMs` for
+Council seats (explicitly routed seats only; inherited seats take
+Solo's sizing). The Anthropic SDK path restores the SDK's additive
+thinking budget on top of your exact answer ceiling, so thinking can no
+longer starve the answer.
+
 Which levels are valid depends on the backend, and for codex on the model.
 `gpt-5.6-sol` accepts up to `ultra`, while `gpt-5.5` stops at `xhigh`. The
 wizard asks codex what the model you picked actually supports and offers

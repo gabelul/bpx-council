@@ -68,6 +68,10 @@ export interface CouncilConfig {
 	 * Unassigned personas use the shared `solo.backend`.
 	 */
 	backends?: Record<string, string | null>;
+	/** Per-call timeout for explicitly routed Council seats (default 120000). */
+	timeoutMs?: number;
+	/** Output token ceiling for explicitly routed Council SDK/HTTP seats (default 8192). */
+	maxOutputTokens?: number;
 	/** Backend[:model][@effort] for the verdict; null resets inherited config to Solo. */
 	synthesizer?: string | null;
 }

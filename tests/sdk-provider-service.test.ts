@@ -300,11 +300,11 @@ describe("production Council SDK service", () => {
 		expect(stockWire).toHaveLength(1); expect(mock.state.requests).toHaveLength(1);
 	});
 
-	it("actual stock legacy thinking keeps selected SDK budget while ceiling remains exact", async () => {
+	it("actual stock legacy thinking restores the SDK additive budget with an exact answer ceiling", async () => {
 		service = createSdkProviderService({ credentials: store });
 		await service.setApiKey("anthropic", SYNTHETIC.own, new AbortController().signal);
 		const result = await service.call({ ...request("anthropic"), model: "claude-sonnet-4-5", maxOutputTokens: 4096 });
-		expect(result.ok).toBe(true); expect(stockWire.at(-1)).toMatchObject({ maxTokens: 4096, thinkingBudget: 2048, thinkingType: "enabled", tools: 0 });
+		expect(result.ok).toBe(true); expect(stockWire.at(-1)).toMatchObject({ maxTokens: 6144, thinkingBudget: 2048, thinkingType: "enabled", tools: 0 });
 		expect(await service.call({ ...request("anthropic"), model: "claude-sonnet-4-5", maxOutputTokens: 3071 })).toMatchObject({ ok: false, error: expect.stringContaining("full SDK thinking budget") });
 		expect(stockWire).toHaveLength(1);
 	});
@@ -412,13 +412,13 @@ describe("production Council SDK service", () => {
 		expect(service.preflight({ provider: "openai" }).error).toContain("exact");
 	});
 
-	it("refuses impossible legacy budgets locally, but restores supported total cap without downmapping thinking", async () => {
+	it("refuses impossible legacy budgets locally, but restores the additive thinking total cap", async () => {
 		await service.setApiKey("anthropic", SYNTHETIC.own, new AbortController().signal);
 		const result = await service.call({ ...request("anthropic"), model: "claude-sonnet-4-5" });
 		expect(result).toMatchObject({ ok: false, error: expect.stringContaining("full SDK thinking budget") });
 		expect(mock.state.requests).toHaveLength(0);
 		const supported = await service.call({ ...request("anthropic"), model: "claude-sonnet-4-5", maxOutputTokens: 4096 });
-		expect(supported.ok).toBe(true); expect(mock.state.requests.at(-1)?.maxTokens).toBe(4096);
+		expect(supported.ok).toBe(true); expect(mock.state.requests.at(-1)?.maxTokens).toBe(6144);
 	});
 
 	it("caps text and classifies timeout/cancellation after actual signal abortion", async () => {

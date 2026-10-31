@@ -58,7 +58,7 @@ describe("real SDK workbench action ceilings", () => {
 		const result = await defaultConfigActions.test(config, target, new AbortController().signal, { sdkAccountRevision: checked.revision });
 		expect(result).toMatchObject({ ok: true, text: "Route responded." });
 		expect(mock.state.requests).toHaveLength(1);
-		expect(mock.state.requests[0]).toMatchObject({ model: config.solo!.backend!.model, maxTokens: 8192, toolDeclarations: 0, ownCredentialUsed: true });
+		expect(mock.state.requests[0]).toMatchObject({ model: config.solo!.backend!.model, maxTokens: provider === "anthropic" ? 10240 : 8192, toolDeclarations: 0, ownCredentialUsed: true });
 		if (provider === "anthropic") expect(mock.state.requests[0].thinking?.budget_tokens).toBe(2048);
 		expect(config).toEqual(draft(provider));
 	});
@@ -68,7 +68,7 @@ describe("real SDK workbench action ceilings", () => {
 		const checked = defaultConfigActions.preflight(config, seat, "generate"); expect(checked.error).toBeUndefined();
 		const result = await defaultConfigActions.generate(config, seat, "Review SDK token budgets", new AbortController().signal, { sdkAccountRevision: checked.revision });
 		expect(result).toMatchObject({ ok: true, candidate: { name: "sdk-reviewer", stance: "neutral" } });
-		expect(mock.state.requests).toHaveLength(1); expect(mock.state.requests[0].maxTokens).toBe(ceiling);
+		expect(mock.state.requests).toHaveLength(1); expect(mock.state.requests[0].maxTokens).toBe(provider === "anthropic" ? ceiling + 2048 : ceiling);
 		expect(config).toEqual(draft(provider, ceiling));
 	});
 	it.each(["openai", "anthropic"] as const)("%s impossible ceiling is blocked before transport", async provider => {

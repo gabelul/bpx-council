@@ -26,6 +26,7 @@ export type DetectedBackend = CliBackendConfig | HttpBackendConfig | PtyBackendC
 /** Run-wide controls applied to explicitly selected seat routes. */
 export interface SeatOptions {
 	timeoutMs?: number;
+	maxOutputTokens?: number;
 	isolate?: boolean;
 	images?: string[];
 	imageData?: PreparedImage[];
@@ -116,6 +117,7 @@ export function resolveSeatBackend(
 		if (!trimmed || !trimmed.split(/[:@]/, 1)[0]) throw new Error(`Invalid backend spec: ${JSON.stringify(spec)}`);
 		backend = detectBackend(parseBackendArg(trimmed));
 		if (options.timeoutMs) backend.timeoutMs = options.timeoutMs;
+		if (options.maxOutputTokens && (backend.type === "sdk" || backend.type === "http")) backend.maxOutputTokens = options.maxOutputTokens;
 		if (options.isolate && backend.type === "cli") backend.isolate = true;
 	}
 	if (options.images?.length || options.imageData?.length) {

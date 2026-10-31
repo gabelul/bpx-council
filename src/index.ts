@@ -422,7 +422,7 @@ async function main(): Promise<void> {
 
 	const context = [fileContext, stdinContext].filter(Boolean).join("\n\n");
 	const commonArgs = { question: args.question, context: context || undefined, config };
-	const seatOptions = { timeoutMs: args.timeoutMs, isolate: args.isolate, images: args.images, imageData };
+	const seatOptions = { timeoutMs: args.timeoutMs ?? config.council?.timeoutMs, maxOutputTokens: config.council?.maxOutputTokens, isolate: args.isolate, images: args.images, imageData };
 	const onAttempt = activeReceipt ? (attempt: Parameters<typeof addAttempt>[1]) => addAttempt(activeReceipt!, attempt) : undefined;
 	const onPlan = activeReceipt ? (seats: Receipt["planned"]) => { activeReceipt!.planned = seats; } : undefined;
 
